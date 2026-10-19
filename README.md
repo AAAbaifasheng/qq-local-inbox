@@ -1,0 +1,112 @@
+# QQ Local Inbox
+
+**Windows 桌面版 · NapCatQQ / OneBot 11 · 本地规则 / 可选本机或 DeepSeek 大模型 · SQLite 本地存储**
+
+这是从早期命令行 MVP 升级的可运行桌面原型。它只接收启动监听后的实时消息事件；你也可以通过本机 NapCat HTTP 接口手动导入指定会话最近 N 条历史文本。程序按本地规则或 OpenAI 兼容模型（本机 Ollama/LM Studio，或显式确认后的 DeepSeek）识别作业、比赛、项目、邀约与待回复事项；每个事务候选必须经过你手动确认，才会进入已确认待办。首页“事务中心”汇总今日待办、待回复、比赛与项目、待确认邀约，并按优先级列出需要处理的事项；独立的“比赛/竞赛”页会集中罗列所有比赛、竞赛相关事项（待确认/已确认/已完成）。联系人排序以待处理工作量为依据，不是对联系人个人价值做评价。
+
+## 隐私设计
+
+- 默认使用本地规则，不调用模型；可显式切换到“大模型 API”模式。
+- 默认只允许连接 `127.0.0.1`、`localhost` 或 `::1` 的 OpenAI 兼容端点（例如 Ollama、LM Studio）。远程端点只允许 HTTPS，必须勾选知情确认并填写 API Key；使用 DeepSeek 时消息文本会发送给 DeepSeek，同时附带最少上下文（私聊/群聊、是否 @ 你、发送者角色），不发送群名称。
+- 只允许连接本机 WebSocket 和本机 NapCat HTTP 地址，拒绝远程主机与地址中内嵌的账号密码。
+- Access Token / API Key 使用 Windows DPAPI 按当前 Windows 用户加密保存在 `secrets.dat`，不写入 `settings.json`、日志或 SQLite 明文；设置文件只保存端点、模型与是否允许远程 API。
+- 启动时默认自动连接 NapCat，并自动同步今天的最近会话消息；今日同步先用本地规则预筛，只有候选/待回复文本才会交给远程模型。
+- 群聊降噪：只有直接 @ 你、群主/管理员或群公告要求全体成员执行、带明确截止时间的作业/报名/提交通知、比赛/竞赛公开信息才进入候选；群内普通提问、讨论、玩笑、招募/代课/家教广告只本地入库，不生成待办。
+- 同一会话、同一文本、同一截止日的活跃待办会自动合并，避免实时与今日同步重复创建；历史重复候选在启动时合并。
+- 所有凭据可在界面底部“清除已保存凭据”一键删除；清除后不会删除消息与待办。
+- 只保留消息事件必要字段与纯文本；不保存完整原始事件 JSON，不下载/分析图片、文件、语音等附件。
+- 历史记录只在点击“导入历史消息”后，从本机 NapCat HTTP 接口读取你指定会话的最近 N 条文本；不会自动拉取，也不会读取其他会话。
+- 默认只接收私聊；群消息默认关闭。打开“接收群消息”后，实时群聊与今日同步使用同一范围：普通群聊只本地规则归档，只有候选/待回复文本才交给模型。
+- 不发送 QQ 消息、不自动回复、不自动接受邀约。
+- 本地数据默认位于 `%LOCALAPPDATA%\QQLocalInbox\`，包括 `inbox.sqlite3` 与不含 Token/Key 的 `settings.json`。
+
+> QQ 本身以及 NapCat 的通信进程仍需要联网连接 QQ 服务。我们能约束的是此程序如何处理聊天消息，而不是保证整个 QQ 环境零网络流量。部署前应阅读 NapCat 当前版本的官方说明与隐私/安全行为。本机模型服务（Ollama/LM Studio）与远程服务（如 DeepSeek）是否记录请求、如何使用数据，由对应服务的配置与隐私政策决定。
+
+## Windows 安装
+
+要求：Windows 10/11 x64、Python 3.11 或 3.12（含 Tcl/Tk）和能访问 PyPI 下载 `websocket-client` 的网络。联网用于首次安装依赖；规则模式运行时不调用模型。本机模型模式只访问你配置的本机端点；DeepSeek 等远程模式需显式勾选知情确认。
+
+1. 下载并解压项目目录。
+2. 右键 PowerShell，进入解压目录。
+3. 执行：
+
+   ```powershell
+   Set-ExecutionPolicy -Scope Process Bypass
+   .\install.ps1
+   ```
+
+4. 双击 `run.bat`。
+5. 按 `docs/NAPCAT_SETUP.md` 配置 NapCat 的 OneBot 11 WebSocket Server；如需要导入历史记录，再开启本机 HTTP Server。
+
+如果你不想在每次启动时连接互联网安装依赖，可以先在可联网环境安装/构建，再按组织的离线分发方式传递依赖包；不要为省事把消息转发到云端分析服务。
+
+## 使用
+
+1. 确认 NapCat 已经运行，并配置 `ws://127.0.0.1:3001`（端口以实际配置为准）。
+2. 首次启动应用，输入 OneBot Access Token（NapCat 未设置 Token 时可留空），选择“本地规则”或“大模型 API”，点击“开始监听新消息”。Token/Key 会用 DPAPI 加密保存；之后启动会按设置自动连接，不需要重复输入。
+3. 应用会按设置自动同步今天的最近会话消息（默认开启）；开启群消息后，实时群聊也会进入“最近消息”。命中行动规则的消息会自动出现在“待审核事务”和首页“优先处理”。
+4. 在“事务中心”或“待审核事务”查看原消息，点击“确认加入待办”或“忽略此候选”。已确认项目可标记完成。“比赛/竞赛”页集中罗列所有比赛、竞赛事项（待确认/已确认/已完成），可直接查看详情、确认、忽略或标记完成。
+5. 如需处理更早的聊天记录，点击“导入历史消息…”，填写本机 NapCat HTTP 地址（默认 `http://127.0.0.1:3000`）、HTTP Access Token，选择好友/群与条数后导入。导入使用当前分析模式，导入的候选仍需人工确认；远程模式下对话框会提示每条导入文本会发送给服务商。
+6. 停止监听时点击“停止监听”或直接关闭窗口。连接设置折叠时，先停止监听再修改。
+
+### 使用 DeepSeek（远程 API）
+
+1. 在“大模型 API”模式选择 `DeepSeek` 预设；Endpoint 自动填 `https://api.deepseek.com/v1/chat/completions`，模型自动填 `deepseek-chat`。
+2. 勾选“我知晓远程 API 会把消息文本发送给该服务商”。
+3. 在 API Key 输入框填入 DeepSeek Key；Key 会用 Windows DPAPI 加密保存到当前 Windows 用户。
+4. 点击“开始监听新消息”。私聊新消息逐条送 DeepSeek 分析；群聊先做本地规则和上下文预筛，普通讨论、提问、广告只本地入库，只有 @你、群公告/管理员要求、明确截止通知或比赛信息才送模型。发送给远程服务的只有消息文本与最少上下文（私聊/群聊、是否 @ 你、发送者角色），不发送群名称。
+5. Endpoint、模型名称与远程知情确认保存在 `settings.json`；Key 只以 DPAPI 加密形式保存在 `secrets.dat`。可在底部“清除已保存凭据”删除 Key/Token 并取消远程确认。
+6. 本机模型与远程模型可以随时切换；切换后停止再开始监听即可，不需要重新输入已保存的 Key。
+
+程序不会自动登录 QQ；启动时可同步今天最近会话，但不会补抓更早历史；不会自动替你答应邀约或回复联系人。连接中断期间的消息可能漏收，实时链路不追补历史记录；更早的记录只能由你手动导入。
+
+## 测试
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+无需 QQ 登录即可运行规则、本机地址保护、远程端点知情确认、DPAPI 凭据加密、日期推算、NapCat 客户端（模拟 HTTP）、今日同步、SQLite 流程与仪表盘统计测试。测试使用临时数据目录，不会触碰真实的 `%LOCALAPPDATA%\QQLocalInbox\`。
+
+## 打包成 EXE（可选）
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install pyinstaller
+.\.venv\Scripts\pyinstaller.exe --noconfirm --clean --windowed --name QQLocalInbox --collect-all websocket --hidden-import=tkinter --hidden-import=tkinter.ttk launcher.py
+```
+
+生成文件在 `dist\QQLocalInbox\` 或 PyInstaller 当前版本对应目录。第一次建议使用 onedir 目录包，方便排查依赖。打包产物不包含你的 QQ Token 或消息数据库。
+
+## 重要限制
+
+- `rules` 模式是可解释的关键词规则，不是 AI 语义理解；`api` 模式使用你指定的 OpenAI 兼容 Chat Completions 接口，默认本机，远程需显式确认。
+- 本机模型模式只把消息发送到本机端点；DeepSeek 等远程模式会把消息文本发送给服务商。任何模式在分析失败时都不会自动回退或自动改用其他服务。
+- 模型需兼容 OpenAI Chat Completions，并返回可解析的 JSON；不兼容时会显示分析失败，消息不会入库，可切回规则模式。
+- `今天/明天/周末` 会按消息发送时间推算为具体日期，但“周末/下周/本月”等表达仍有歧义；推算结果会显示为 `YYYY-MM-DD（相对标签）`，最终以人工核对为准。
+- “联系人重要性”目前体现在待处理事项优先级与排序分上；不会依据聊天频率做联系人价值画像。
+- 今日自动同步读取最近 50 个会话中今天有活动的会话，每会话最多 30 条、总计 300 条；先用本地规则预筛，只有候选/待回复文本发送给模型。该上限与预筛策略见 `src/sync.py`。
+- 凭据加密依赖 Windows DPAPI：同一 Windows 用户可解密，其他账户不能；如果移动数据目录到另一台电脑或另一个用户，需要重新输入凭据。若 Key 曾出现在聊天/截图中，仍建议在服务商控制台轮换。
+- 桌面快捷方式默认指向本机 `.venv\Scripts\pythonw.exe`；移动项目目录后需要重建快捷方式。
+- 当前版本无消息编辑监听、撤回同步、文件下载、OCR、语音转写、桌面通知或定时提醒。
+- 本地 SQLite 当前没有应用层字段加密；请保护 Windows 账户，启用 BitLocker/设备加密，并确保备份加密。清空功能会尝试 checkpoint/VACUUM，但不保证清除 SSD 磨损均衡、系统快照或既有备份中的所有残留。
+- 历史导入依赖 NapCat HTTP Server，一次只读取所选会话最近 N 条文本；不下载媒体。导入文本按当前分析模式处理，远程模式下会发送给服务商；中途失败时已导入数据会保留，重试会按消息去重。
+- 若 NapCat 的 WS/HTTP Token 为空，程序允许留空连接，但任何本机进程都可能访问这些端口；共享电脑上建议为 NapCat 设置 Token 并在程序中填写。
+
+## 技术结构
+
+- `src/app.py`：Tkinter 主窗口、连接生命周期、事件队列、人工审核工作流
+- `src/dashboard.py`：事务中心计数卡与优先处理列表
+- `src/import_dialog.py`：NapCat 历史消息导入对话框与后台导入流程
+- `src/napcat_api.py`：本机 NapCat OneBot HTTP API 客户端（列表/历史/错误归类）
+- `src/localnet.py`：本机地址白名单与远程端点判断
+- `src/timeparse.py`：按消息发送时间推算具体截止日期与时刻
+- `src/sync.py`：今日最近会话同步、本地规则预筛与去重
+- `src/secret_store.py`：Windows DPAPI 加密保存/读取/清除凭据
+- `src/onebot.py`：本机 WebSocket 接收、可选 Token、事件字段白名单与文本过滤
+- `src/classifier.py`：本地规则分类和优先级评分
+- `src/api_classifier.py`：本机或需确认的远程 OpenAI 兼容模型分类与字段校验
+- `src/store.py`：SQLite 本地消息、事务候选、状态、截止日期与仪表盘统计
+- `src/config.py`：仅持久化非秘密设置；远程端点可保存，Key 与确认状态分离管理
+- `assets/icon.ico`：应用与桌面快捷方式图标
+- `docs/NAPCAT_SETUP.md`：NapCat WebSocket / HTTP 配置和故障排除
+- `PRIVACY.md`：安全检查清单

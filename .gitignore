@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+.env
+settings.json
+secrets.dat
+build/
+dist/
+*.spec
+vibe_images/
+karpathy-guidelines-SKILL.md
+.qoder/
