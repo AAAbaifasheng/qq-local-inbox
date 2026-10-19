@@ -67,6 +67,7 @@ flowchart LR
 | [API 接入、费用与本地模型](docs/API_AND_MODELS.md) | DeepSeek/Ollama/LM Studio 接入、Token 估算、峰谷价格、本地模型推荐 |
 | [NapCat 本机连接配置](docs/NAPCAT_SETUP.md) | WebSocket/HTTP 配置、Token、故障排除 |
 | [隐私与安全检查清单](PRIVACY.md) | 本地存储、凭据、远程外发、数据清除 |
+| [安全策略](SECURITY.md) | 漏洞报告方式、范围、数据安全与已知限制 |
 | [第三方组件与引用说明](THIRD_PARTY_NOTICES.md) | NapCatQQ、OneBot 11、websocket-client、DeepSeek、Ollama、LM Studio 与免责声明 |
 
 ## 隐私设计
@@ -233,4 +234,5 @@ DeepSeek 当前官方模型为 `deepseek-flash` 与 `deepseek-v4-pro`；应用�
 - `docs/API_AND_MODELS.md`：API 接入、费用与本地模型推荐
 - `docs/NAPCAT_SETUP.md`：NapCat WebSocket / HTTP 配置和故障排除
 - `THIRD_PARTY_NOTICES.md`：第三方组件、NapCat/QQ 引用与免责声明
+- `SECURITY.md`：漏洞报告方式、范围与数据安全说明
 - `PRIVACY.md`：安全检查清单
