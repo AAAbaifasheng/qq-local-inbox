@@ -38,7 +38,7 @@
 - `context` 只包含消息类型、是否群聊、发送者角色、是否 @ 你；不包含群名称。
 - DeepSeek 请求会关闭思考模式并限制 `max_tokens`，减少输出 token 和延迟。
 - 本机 Ollama / LM Studio 请求不会带 DeepSeek 的 `thinking` 字段。
-- 模型返回必须是 JSON；程序会容忍 ```json 代码块和 JSON 前后的说明文字。
+- 模型返回必须是 JSON；程序会容忍 Markdown JSON 代码块和 JSON 前后的说明文字。
 - 群聊在调用模型前会先做本地规则和上下文预筛；普通讨论、提问、广告不会送模型。
 - 今日同步也先本地预筛；只有候选/待回复文本调用模型。
 

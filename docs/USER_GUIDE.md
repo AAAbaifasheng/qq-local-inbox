@@ -218,7 +218,7 @@ API Key 和 Token 使用 Windows DPAPI 加密保存在本机，不需要每次�
 
 **API 报 401/403**：检查 API Key、余额、模型名和远程知情确认。DeepSeek 当前模型名为 `deepseek-flash` 或 `deepseek-v4-pro`。
 
-**本地模型返回格式错误**：程序会尝试去除 ```json 代码块并提取 JSON；如果仍失败，换用指令模型、开启 JSON 模式，或先用规则模式。详见 [API 与本地模型](API_AND_MODELS.md)。
+**本地模型返回格式错误**：程序会尝试去除 Markdown JSON 代码块并提取 JSON；如果仍失败，换用指令模型、开启 JSON 模式，或先用规则模式。详见 [API 与本地模型](API_AND_MODELS.md)。
 
 **本地模型很慢**：7B/8B 模型在 GPU 上通常比 14B/32B 快；CPU 运行会明显变慢。高消息量建议规则模式或更小模型。
 
