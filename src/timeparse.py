@@ -12,11 +12,13 @@ def resolve_due(text: str, date_hint: str | None = None, reference: datetime | N
     ref = reference or datetime.now()
     ref_date = ref.date()
 
-    due = _parse_explicit_date(source, ref_date)
+    due = _parse_explicit_date(hint, ref_date) if hint else None
+    if due is None:
+        due = _parse_explicit_date(source, ref_date)
     if due is None:
         due = _parse_relative_date(source, ref_date)
     if due is None and hint:
-        due = _parse_explicit_date(hint, ref_date) or _parse_relative_date(hint, ref_date)
+        due = _parse_relative_date(hint, ref_date)
     if due is None:
         return None, hint
 
@@ -26,6 +28,39 @@ def resolve_due(text: str, date_hint: str | None = None, reference: datetime | N
     suffix = f"{label} {daypart}" if daypart and not time_str else label
     display = f"{due.isoformat()}{' ' + time_str if time_str else ''}（{suffix}）"
     return due.isoformat(), display
+
+_RELATIVE_LABEL_PREFIX = re.compile(
+    r"^(今天|明天|后天|大后天|下周[一二三四五六日天]|(?:周|星期|礼拜)[一二三四五六日天])\s*"
+)
+
+
+def format_due_display(due_date: str | None, due_display: str | None = None,
+                       due_hint: str | None = None, today: date | None = None) -> str:
+    """Re-render a stored due value so relative labels follow the current day.
+
+    due_display is written relative to the message time at insert time. Rendering
+    it later unchanged makes the same due date show 今天 for one message and
+    明天 for another; only the absolute date in due_date is authoritative.
+    """
+    if not due_date:
+        return due_display or due_hint or "待核对"
+    try:
+        due = date.fromisoformat(str(due_date)[:10])
+    except ValueError:
+        return due_display or due_hint or str(due_date)
+
+    label = _relative_label(due, today or date.today())
+    stored = due_display or ""
+    time_match = re.search(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)", stored)
+    time_str = (f"{int(time_match.group(1)):02d}:{time_match.group(2)}"
+                if time_match else "")
+    daypart = ""
+    parenthetical = re.search(r"（([^）]*)）", stored)
+    if parenthetical:
+        daypart = _RELATIVE_LABEL_PREFIX.sub("", parenthetical.group(1)).strip()
+    suffix = f"{label} {daypart}" if daypart else label
+    return f"{due.isoformat()}{' ' + time_str if time_str else ''}（{suffix}）"
+
 
 def _parse_explicit_date(source: str, ref_date: date) -> date | None:
     match = re.search(r"(\d{4})\s*[-/年]\s*(\d{1,2})\s*[-/月]\s*(\d{1,2})\s*日?", source)

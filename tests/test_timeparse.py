@@ -1,6 +1,6 @@
 import unittest
-from datetime import datetime
-from src.timeparse import resolve_due
+from datetime import date, datetime
+from src.timeparse import format_due_display, resolve_due
 
 SUNDAY = datetime(2026, 10, 18, 12, 0)
 MONDAY = datetime(2026, 10, 19, 12, 0)
@@ -67,10 +67,52 @@ class DueDateTests(unittest.TestCase):
     def test_hint_fallback(self):
         self.check("记得交作业", "2026-10-19", hint="明天")
 
+    def test_explicit_hint_wins_over_ambiguous_source(self):
+        text = ("今天是2026年10月19日，学校安排如下：每日早晨5：00前到校；"
+                "这周四收取50元资料费")
+        self.check(text, "2026-10-22", hint="2026-10-22", reference=MONDAY)
+
     def test_no_date(self):
         due, display = resolve_due("记得看一下消息", "明确日期待核对", SUNDAY)
         self.assertIsNone(due)
         self.assertIn("待核对", display)
+
+class StoredDueDisplayTests(unittest.TestCase):
+    TODAY = date(2026, 10, 19)
+
+    def test_stale_relative_label_is_recomputed(self):
+        self.assertEqual(
+            format_due_display("2026-10-19", "2026-10-19（明天）", None, today=self.TODAY),
+            "2026-10-19（今天）")
+
+    def test_explicit_time_is_preserved(self):
+        self.assertEqual(
+            format_due_display("2026-10-19", "2026-10-19 16:00（明天）", None,
+                               today=self.TODAY),
+            "2026-10-19 16:00（今天）")
+
+    def test_daypart_is_preserved(self):
+        self.assertEqual(
+            format_due_display("2026-10-19", "2026-10-19（明天 晚上）", None,
+                               today=self.TODAY),
+            "2026-10-19（今天 晚上）")
+
+    def test_same_due_date_never_mixes_today_and_tomorrow(self):
+        values = {
+            format_due_display("2026-10-19", stored, None, today=self.TODAY)
+            for stored in ("2026-10-19（今天）", "2026-10-19（明天）",
+                           "2026-10-19 16:00（明天）")
+        }
+        self.assertEqual(values, {"2026-10-19（今天）", "2026-10-19 16:00（今天）"})
+
+    def test_future_date_uses_fresh_label(self):
+        self.assertEqual(
+            format_due_display("2026-10-20", "2026-10-20（今天）", None, today=self.TODAY),
+            "2026-10-20（明天）")
+
+    def test_missing_date_falls_back_to_hint(self):
+        self.assertEqual(format_due_display(None, None, "周五前", today=self.TODAY), "周五前")
+
 
 if __name__ == "__main__":
     unittest.main()
