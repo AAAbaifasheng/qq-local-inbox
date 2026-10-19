@@ -123,5 +123,46 @@ class ApiClassifierTests(unittest.TestCase):
         result = classify_with_api("比赛通知", "http://127.0.0.1:11434/v1/chat/completions", "m", "")
         self.assertEqual(result["categories"], ["比赛/竞赛"])
 
+    @patch("src.api_classifier.urllib.request.urlopen")
+    def test_json_inside_code_fence_is_accepted(self, mocked):
+        content = "```json\n" + json.dumps({
+            "categories": ["作业/课程"], "importance": 60, "priority": "P1",
+            "needs_reply": False, "date_hint": "明天", "task_candidate": True,
+            "confidence": 0.8, "reasons": ["截止"], "title": "提交作业"
+        }, ensure_ascii=False) + "\n```"
+        mocked.return_value = FakeResponse({"choices": [{"message": {"content": content}}]})
+        result = classify_with_api("明天交作业", "http://127.0.0.1:11434/v1/chat/completions", "m", "")
+        self.assertTrue(result["task_candidate"])
+        self.assertEqual(result["title"], "提交作业")
+
+    @patch("src.api_classifier.urllib.request.urlopen")
+    def test_json_after_explanatory_text_is_accepted(self, mocked):
+        content = "分析结果如下：\n" + json.dumps({
+            "categories": ["普通消息"], "importance": 20, "priority": "P3",
+            "needs_reply": False, "date_hint": None, "task_candidate": False,
+            "confidence": 0.6, "reasons": ["闲聊"], "title": "闲聊"
+        }, ensure_ascii=False)
+        mocked.return_value = FakeResponse({"choices": [{"message": {"content": content}}]})
+        result = classify_with_api("今天天气不错", "http://127.0.0.1:11434/v1/chat/completions", "m", "")
+        self.assertFalse(result["task_candidate"])
+
+    @patch("src.api_classifier.urllib.request.urlopen")
+    def test_deepseek_request_disables_thinking(self, mocked):
+        mocked.return_value = FakeResponse(response_payload())
+        classify_with_api("比赛明天截止", "https://api.deepseek.com/v1/chat/completions",
+                          "deepseek-flash", "sk-test", allow_remote=True)
+        body = json.loads(mocked.call_args[0][0].data.decode())
+        self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertLessEqual(body["max_tokens"], 800)
+
+    @patch("src.api_classifier.urllib.request.urlopen")
+    def test_local_request_does_not_send_deepseek_thinking_field(self, mocked):
+        mocked.return_value = FakeResponse(response_payload())
+        classify_with_api("比赛明天截止", "http://127.0.0.1:11434/v1/chat/completions",
+                          "qwen3:8b", "")
+        body = json.loads(mocked.call_args[0][0].data.decode())
+        self.assertNotIn("thinking", body)
+        self.assertNotIn("max_tokens", body)
+
 if __name__ == "__main__":
     unittest.main()

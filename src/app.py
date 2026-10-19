@@ -504,7 +504,7 @@ class InboxApp:
         if endpoint:
             self.api_endpoint_var.set(endpoint)
             if preset == "DeepSeek":
-                self.api_model_var.set("deepseek-chat")
+                self.api_model_var.set("deepseek-flash")
         self._toggle_api_fields()
 
     def set_status(self, text):
@@ -528,7 +528,7 @@ class InboxApp:
                 if is_remote_url(endpoint) and not api_key:
                     raise ValueError("远程 API 必须填写 API Key。")
                 if not model:
-                    raise ValueError("大模型 API 模式必须填写模型名称（例如 deepseek-chat 或 qwen2.5:7b）。")
+                    raise ValueError("大模型 API 模式必须填写模型名称（例如 deepseek-flash 或 qwen3:8b）。")
             self.api_key_memory = api_key
             self.token_memory = token.strip()
             save_secret(SECRET_API_KEY, api_key)
