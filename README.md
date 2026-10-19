@@ -1,16 +1,73 @@
 # QQ Local Inbox
 
-**Windows 桌面版 · NapCatQQ / OneBot 11 · 本地规则 / 可选本机或 DeepSeek 大模型 · SQLite 本地存储**
+<p align="center">
+  <img src="docs/images/hero.png" alt="QQ Local Inbox 本地事务分拣器" width="100%">
+</p>
 
-这是从早期命令行 MVP 升级的可运行桌面原型。它只接收启动监听后的实时消息事件；你也可以通过本机 NapCat HTTP 接口手动导入指定会话最近 N 条历史文本。程序按本地规则或 OpenAI 兼容模型（本机 Ollama/LM Studio，或显式确认后的 DeepSeek）识别作业、比赛、项目、邀约与待回复事项；每个事务候选必须经过你手动确认，才会进入已确认待办。首页“事务中心”汇总今日待办、待回复、比赛与项目、待确认邀约，并按优先级列出需要处理的事项；独立的“比赛/竞赛”页会集中罗列所有比赛、竞赛相关事项（待确认/已确认/已完成）。联系人排序以待处理工作量为依据，不是对联系人个人价值做评价。
+<p align="center">
+  <a href="docs/USER_GUIDE.md"><img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0A7BBB?style=flat-square" alt="Windows"></a>
+  <a href="docs/USER_GUIDE.md"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-21A96B?style=flat-square" alt="MIT"></a>
+  <a href="PRIVACY.md"><img src="https://img.shields.io/badge/privacy-local--first-00AEEC?style=flat-square" alt="Local first"></a>
+  <a href="docs/NAPCAT_SETUP.md"><img src="https://img.shields.io/badge/NapCat-OneBot%2011-FB7299?style=flat-square" alt="NapCat OneBot 11"></a>
+</p>
 
-## 文档导航
+<p align="center">
+  <strong>把 QQ 里需要你处理的事，整理成一张本地事务面板。</strong><br>
+  作业 / 比赛 / 项目 / 邀约 / 待回复 · 本地 SQLite · 可选本地或远程模型
+</p>
 
-- [使用教程与注意事项](docs/USER_GUIDE.md)：安装、NapCat、首次配置、日常操作、分拣规则、常见问题
-- [API 接入、费用与本地模型](docs/API_AND_MODELS.md)：DeepSeek/Ollama/LM Studio 接入、Token 估算、峰谷价格、本地模型推荐
-- [NapCat 本机连接配置](docs/NAPCAT_SETUP.md)
-- [隐私与安全检查清单](PRIVACY.md)
-- [第三方组件与 NapCat/QQ 引用说明](THIRD_PARTY_NOTICES.md)
+> 本项目不是腾讯 QQ 官方产品，也不隶属于 NapCatQQ。QQ 接入通过你自行安装并登录的 NapCatQQ 完成；不提供 QQ 登录、消息发送或自动回复能力。
+
+## 界面预览
+
+> 下图使用虚构演示数据，不包含真实聊天记录。群名、联系人和事项均为示例。
+
+<p align="center">
+  <img src="docs/images/ui-overview.png" alt="事务中心界面" width="92%">
+</p>
+
+## 核心能力
+
+| 模块 | 说明 |
+| --- | --- |
+| 事务中心 | 今日待办、待回复、比赛与项目、待确认邀约四张卡片，按优先级列出最多 12 条事项 |
+| 比赛/竞赛 | 独立页面集中展示待确认、已确认、已完成的比赛与竞赛事项 |
+| 智能分拣 | 本地规则或 OpenAI 兼容模型；识别作业、比赛、项目、邀约、求助、材料、缴费、出行、就医 |
+| 群聊降噪 | 只有 @你、群公告/管理员要求、明确截止通知、比赛信息才进入候选；闲聊和广告只本地归档 |
+| 重复合并 | 同一会话、同一文本、同一截止日的活跃待办自动合并 |
+| 凭据与隐私 | API Key / NapCat Token 用 Windows DPAPI 加密；远程 API 必须显式确认 |
+| 自动同步 | 启动自动连接 NapCat，并同步最近 50 个会话中今天有活动的内容 |
+| 历史导入 | 通过本机 NapCat HTTP 接口手动导入指定好友/群的最近 N 条文本 |
+
+## 数据流与隐私边界
+
+```mermaid
+flowchart LR
+    QQ["QQ 客户端"] --> NapCat["NapCatQQ\n本机协议端"]
+    NapCat -->|"WS 127.0.0.1:3001"| App["QQ Local Inbox"]
+    NapCat -->|"HTTP 127.0.0.1:3000"| App
+    App --> DB[("SQLite\n本地消息与待办")]
+    App -.->|"可选"| Local["Ollama / LM Studio\n本机模型"]
+    App -.->|"可选，需确认"| Remote["DeepSeek\n远程 HTTPS"]
+
+    classDef local fill:#E6F7FD,stroke:#00AEEC,color:#18191C;
+    classDef remote fill:#FFF0F5,stroke:#FB7299,color:#18191C;
+    class QQ,NapCat,App,DB,Local local;
+    class Remote remote;
+```
+
+远程 API 只接收消息文本与最少上下文（私聊/群聊、是否 @ 你、发送者角色），不发送群名称、图片、文件、语音或原始事件 JSON。规则模式和本机模型模式不会把聊天文本发到公网。
+
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [使用教程与注意事项](docs/USER_GUIDE.md) | 安装、NapCat、首次配置、日常操作、分拣规则、数据清理、常见问题 |
+| [API 接入、费用与本地模型](docs/API_AND_MODELS.md) | DeepSeek/Ollama/LM Studio 接入、Token 估算、峰谷价格、本地模型推荐 |
+| [NapCat 本机连接配置](docs/NAPCAT_SETUP.md) | WebSocket/HTTP 配置、Token、故障排除 |
+| [隐私与安全检查清单](PRIVACY.md) | 本地存储、凭据、远程外发、数据清除 |
+| [第三方组件与引用说明](THIRD_PARTY_NOTICES.md) | NapCatQQ、OneBot 11、websocket-client、DeepSeek、Ollama、LM Studio 与免责声明 |
 
 ## 隐私设计
 
@@ -35,6 +92,28 @@
 本项目不是腾讯 QQ 官方产品，也不隶属于 NapCatQQ、DeepSeek、Ollama 或 LM Studio。QQ 接入通过你自行安装并登录的 NapCatQQ 完成；本项目不提供 QQ 登录、消息发送或自动回复能力。QQ 接入需遵守腾讯 QQ 用户协议、NapCat 上游许可和当地法律，第三方协议端可能存在账号风险。
 
 依赖、许可证与引用说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 快速开始
+
+1. 安装 Python 3.11/3.12（勾选 Tcl/Tk），并安装 NapCatQQ、登录 QQ。
+2. 在项目目录安装依赖：
+
+   ```powershell
+   Set-ExecutionPolicy -Scope Process Bypass
+   .\install.ps1
+   ```
+
+3. 按 [NapCat 配置](docs/NAPCAT_SETUP.md) 开启本机 WebSocket Server（`127.0.0.1:3001`）；需要同步今天或导入历史时，再开启本机 HTTP Server（`127.0.0.1:3000`）。
+4. 双击 `run.bat`，点击“连接设置”：
+   - 先用“本地规则”跑通，不调用模型；
+   - 需要语义分析时，切换到“大模型 API”，选择本机 Ollama/LM Studio 或显式确认后的 DeepSeek；
+   - 点击“开始监听”。
+
+| 分析方式 | 适用场景 | 是否外发 |
+| --- | --- | --- |
+| 本地规则 | 高频消息、先跑通流程 | 否 |
+| 本机模型 | 比规则更懂语义，又不想上云 | 只到本机回环地址 |
+| 远程模型 | 需要更强模型，接受费用与隐私政策 | 文本 + 最少上下文 |
 
 ## Windows 安装
 
@@ -76,10 +155,30 @@
 
 ## 费用与本地模型
 
-- DeepSeek 当前官方模型为 `deepseek-flash` 与 `deepseek-v4-pro`；应用预设使用 `deepseek-flash`，并对 DeepSeek 默认关闭思考模式、限制分类输出长度。
-- 价格按输入/输出 token 计费，并区分高峰/空闲时段；2026-10-19 核对的单价、Token 估算和每日/每月费用示例见 [API 接入、费用与本地模型](docs/API_AND_MODELS.md)。
-- 群聊本地预筛、关闭群消息、使用规则模式或本机模型，都能显著减少远程调用与费用。
-- 本机模型推荐 Ollama / LM Studio 的 Qwen2.5/Qwen3 7B-32B 指令模型；显存档位、量化选择和配置步骤同样见上述文档。
+DeepSeek 当前官方模型为 `deepseek-flash` 与 `deepseek-v4-pro`；应用预设使用 `deepseek-flash`，并默认关闭思考模式、限制分类输出长度。实测同一条短消息的输出 token 从 301 降到 81。
+
+### DeepSeek 价格速览（2026-10-19，元 / 百万 token）
+
+| 模型 | 高峰输入（缓存未命中） | 高峰输出 | 空闲输入 | 空闲输出 |
+| --- | ---: | ---: | ---: | ---: |
+| deepseek-flash | 2.00 | 8.00 | 1.00 | 4.00 |
+| deepseek-v4-pro | 9.00 | 27.00 | 4.50 | 13.50 |
+
+高峰为北京时间周一至周五 09:00-12:00、14:00-18:00，其余时间为空闲。完整 Token 估算、单次/每日/每月费用示例和缓存说明见 [API 接入、费用与本地模型](docs/API_AND_MODELS.md)。
+
+### 本地模型速选
+
+| 显存/硬件 | 推荐档位 | 说明 |
+| --- | --- | --- |
+| 4-6GB | 3B-4B，Q4 | 能跑，JSON 稳定性较弱 |
+| 8GB | 7B-8B，Q4_K_M | 推荐的本地最低档 |
+| 12-16GB | 14B，Q4_K_M | 中文语义更稳 |
+| 24GB | 32B，Q4_K_M | 本地质量最好，速度较慢 |
+| 仅 CPU | 3B-4B，Q4 | 可用但慢，高消息量建议规则模式 |
+
+中文分类优先 Qwen2.5 / Qwen3 指令模型；Ollama 与 LM Studio 的配置步骤、模型标识和 JSON 模式注意事项见 [API 接入、费用与本地模型](docs/API_AND_MODELS.md)。
+
+群聊本地预筛、关闭群消息、使用规则模式或本机模型，都能显著减少远程调用与费用。
 
 ## 测试
 
