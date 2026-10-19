@@ -17,11 +17,16 @@ from .secret_store import (SECRET_API_KEY, SECRET_HTTP_TOKEN, SECRET_WS_TOKEN,
 from .store import (init_db, insert_event, list_messages, list_todos, list_contacts,
                     list_competition_items, review_todo, clear_all_data)
 from .sync import needs_model_analysis, sync_today
+from .timeparse import format_due_display
 from .dashboard import DashboardFrame
 from .import_dialog import HistoryImportDialog
+from .theme import (AMBER_SOFT, BG, BLUE, BLUE_HOVER, BLUE_SOFT, BORDER, CARD,
+                    DANGER, RADIUS_LG, RED_SOFT, SUCCESS, TEXT, TEXT_2,
+                    TEXT_3, WARNING, NavBar, RoundedBar, RoundedButton,
+                    RoundedFrame, RoundedLabel, ToggleChip, configure_styles,
+                    ui_font)
 
-UI_FONT = ("Microsoft YaHei UI", 9)
-PAGE_BG = "#f4f5f7"
+PAGE_BG = BG
 API_PRESETS = {
     "Ollama": "http://127.0.0.1:11434/v1/chat/completions",
     "LM Studio": "http://127.0.0.1:1234/v1/chat/completions",
@@ -29,29 +34,14 @@ API_PRESETS = {
 }
 
 def _configure_styles(root):
-    style = ttk.Style(root)
-    try:
-        style.theme_use("clam")
-    except tk.TclError:
-        pass
-    style.configure(".", font=UI_FONT)
-    style.configure("TFrame", background=PAGE_BG)
-    style.configure("TLabel", background=PAGE_BG, foreground="#1f2329")
-    style.configure("TButton", padding=(10, 4))
-    style.configure("TCheckbutton", background=PAGE_BG)
-    style.configure("TRadiobutton", background=PAGE_BG)
-    style.configure("TNotebook", background=PAGE_BG, borderwidth=0)
-    style.configure("TNotebook.Tab", padding=(16, 7))
-    style.map("TNotebook.Tab", background=[("selected", "#ffffff")], foreground=[("selected", "#1f2329")])
-    style.configure("Treeview", rowheight=26, background="#ffffff", fieldbackground="#ffffff", borderwidth=0)
-    style.configure("Treeview.Heading", font=(UI_FONT[0], 9, "bold"))
+    configure_styles(root)
 
 class InboxApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("QQ Local Inbox · 本地事务分拣器")
-        self.root.geometry("1160x820")
-        self.root.minsize(940, 650)
+        self.root.geometry("1240x860")
+        self.root.minsize(1024, 680)
         self.root.configure(bg=PAGE_BG)
         init_db()
         self.settings = load_settings()
@@ -76,8 +66,11 @@ class InboxApp:
         self.remote_consent_var = tk.BooleanVar(value=bool(self.settings.get("allow_remote_api", False)))
         self.auto_connect_var = tk.BooleanVar(value=bool(self.settings.get("auto_connect", True)))
         self.auto_sync_var = tk.BooleanVar(value=bool(self.settings.get("auto_sync_today", True)))
+        self.settings_visible = True
         self._build()
+        self.status.trace_add("write", lambda *_args: self._sync_status_visual())
         self._toggle_api_fields()
+        self._sync_status_visual()
         self.refresh_all()
         self._set_window_icon()
         self.root.after(250, self._drain_events)
@@ -96,161 +89,367 @@ class InboxApp:
         return "自定义"
 
     def _build(self):
-        top = ttk.Frame(self.root, padding=(14, 10, 14, 4))
-        top.pack(fill="x")
-        self.ws_label = ttk.Label(top, text="NapCat OneBot WebSocket：")
-        self.ws_label.grid(row=0, column=0, sticky="w")
-        self.ws_entry = ttk.Entry(top, textvariable=self.url_var, width=34)
-        self.ws_entry.grid(row=0, column=1, sticky="ew", padx=(4, 10))
-        self.token_label = ttk.Label(top, text="Access Token（加密保存，可留空）：")
-        self.token_label.grid(row=0, column=2, sticky="w")
-        self.token_entry = ttk.Entry(top, textvariable=self.token_var, show="•", width=24)
-        self.token_entry.grid(row=0, column=3, sticky="ew", padx=(4, 10))
-        self.options_frame = ttk.Frame(top)
-        self.options_frame.grid(row=1, column=1, columnspan=3, sticky="w", pady=(6, 0))
-        self.group_check = ttk.Checkbutton(self.options_frame, text="接收群消息", variable=self.group_var)
-        self.group_check.pack(side="left")
-        self.auto_connect_check = ttk.Checkbutton(self.options_frame, text="启动时自动连接",
-                                                  variable=self.auto_connect_var)
-        self.auto_connect_check.pack(side="left", padx=(16, 0))
-        self.auto_sync_check = ttk.Checkbutton(self.options_frame, text="启动时同步今天消息",
-                                               variable=self.auto_sync_var)
-        self.auto_sync_check.pack(side="left", padx=(16, 0))
+        self._build_header()
+        self._build_nav()
+        self._build_footer()
+        self.body = tk.Frame(self.root, bg=BG)
+        self.body.pack(fill="both", expand=True)
+        self._build_settings_card()
+        self.content_holder = tk.Frame(self.body, bg=BG)
+        self.content_holder.pack(fill="both", expand=True, padx=20, pady=(16, 12))
+        self._build_pages()
 
-        self.mode_label = ttk.Label(top, text="分析方式：")
-        self.mode_label.grid(row=2, column=0, sticky="w", pady=(8, 0))
-        mode_frame = ttk.Frame(top)
-        mode_frame.grid(row=2, column=1, columnspan=3, sticky="w", pady=(8, 0))
+    def _build_header(self):
+        bar = tk.Frame(self.root, bg=CARD, height=68)
+        bar.pack(fill="x")
+        bar.pack_propagate(False)
+
+        left = tk.Frame(bar, bg=CARD)
+        left.pack(side="left", padx=(20, 0), pady=10)
+        self._logo_img = self._load_logo()
+        if self._logo_img is not None:
+            tk.Label(left, image=self._logo_img, bg=CARD).pack(side="left", padx=(0, 10))
+        brand = tk.Frame(left, bg=CARD)
+        brand.pack(side="left")
+        tk.Label(brand, text="QQ Local Inbox", font=ui_font(15, "bold"),
+                 bg=CARD, fg=TEXT).pack(anchor="w")
+        tk.Label(brand, text="本地事务分拣器 · 隐私优先", font=ui_font(8),
+                 bg=CARD, fg=TEXT_3).pack(anchor="w")
+
+        right = tk.Frame(bar, bg=CARD)
+        right.pack(side="right", padx=(0, 20), pady=10)
+
+        self.conn_var = tk.StringVar(value="未连接")
+        self.conn_pill = RoundedLabel(right, textvariable=self.conn_var, fill=BG,
+                                      fg=TEXT_2, dot_color=TEXT_3, padx=10, pady=5,
+                                      bg=CARD)
+        self.conn_pill.pack(side="left", padx=(0, 14))
+
+        self.settings_toggle_btn = RoundedButton(right, text="连接设置", kind="ghost",
+                                                 command=self._toggle_settings_panel)
+        self.settings_toggle_btn.pack(side="right", padx=(8, 0))
+        self.stop_btn = RoundedButton(right, text="停止监听", kind="ghost",
+                                      state="disabled", command=self.stop_listener)
+        self.stop_btn.pack(side="right", padx=(8, 0))
+        self.start_btn = RoundedButton(right, text="开始监听", kind="pink",
+                                       command=self.start_listener)
+        self.start_btn.pack(side="right", padx=(8, 0))
+        self.sync_btn = RoundedButton(right, text="同步今天", kind="soft",
+                                      command=self.start_today_sync)
+        self.sync_btn.pack(side="right", padx=(8, 0))
+        self.import_btn = RoundedButton(right, text="导入历史", kind="ghost",
+                                        command=self.open_import_dialog)
+        self.import_btn.pack(side="right", padx=(8, 0))
+        self.stop_btn.pack_forget()
+
+    def _build_nav(self):
+        self.nav = NavBar(self.root)
+        self.nav.pack(fill="x")
+
+    def _build_footer(self):
+        footer = tk.Frame(self.root, bg=CARD)
+        footer.pack(side="bottom", fill="x")
+        tk.Frame(footer, bg=BORDER, height=1).pack(side="top", fill="x")
+        inner = tk.Frame(footer, bg=CARD)
+        inner.pack(fill="x", padx=20, pady=(8, 9))
+
+        actions = tk.Frame(inner, bg=CARD)
+        actions.pack(side="right", padx=(14, 0))
+        RoundedButton(actions, text="清除已保存凭据", kind="ghost", height=32, padx=14,
+                      command=self.clear_credentials).pack(side="left", padx=(0, 8))
+        RoundedButton(actions, text="清空本地数据…", kind="danger", height=32, padx=14,
+                      command=self.clear_data).pack(side="left")
+
+        left = tk.Frame(inner, bg=CARD)
+        left.pack(side="left", fill="x", expand=True)
+        status_row = tk.Frame(left, bg=CARD)
+        status_row.pack(fill="x")
+        self.status_dot = tk.Label(status_row, text="●", font=ui_font(8), bg=CARD, fg=TEXT_3)
+        self.status_dot.pack(side="left", padx=(0, 6))
+        self.status_label = ttk.Label(status_row, textvariable=self.status,
+                                      style="CardMuted.TLabel", justify="left",
+                                      wraplength=780)
+        self.status_label.pack(side="left", fill="x", expand=True)
+
+        privacy_row = tk.Frame(left, bg=CARD)
+        privacy_row.pack(fill="x", pady=(3, 0))
+        tk.Label(privacy_row, text="消息仅存本机 SQLite · 凭据经 DPAPI 加密 · 远程调用需确认",
+                 font=ui_font(8), bg=CARD, fg=TEXT_3).pack(side="left")
+        privacy_link = tk.Label(privacy_row, text="隐私说明", font=ui_font(8, "bold"),
+                                bg=CARD, fg=BLUE_HOVER, cursor="hand2")
+        privacy_link.pack(side="left", padx=(8, 0))
+        privacy_link.bind("<Button-1>", lambda _event: self._show_privacy())
+        footer.bind("<Configure>", lambda event: self.status_label.configure(
+            wraplength=max(320, event.width - 460)))
+
+    def _build_settings_card(self):
+        self.settings_card = RoundedFrame(self.body, radius=RADIUS_LG, fill=CARD,
+                                          outline=BORDER, bg=BG)
+        self.settings_card.pack(fill="x")
+        top = tk.Frame(self.settings_card.content, bg=CARD)
+        top.pack(fill="x", padx=18, pady=(14, 16))
+
+        head = tk.Frame(top, bg=CARD)
+        head.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+        tk.Label(head, text="连接与分析设置", font=ui_font(11, "bold"),
+                 bg=CARD, fg=TEXT).pack(side="left")
+        tk.Label(head, text="Token 与 API Key 加密保存在本机，不需要每次输入",
+                 font=ui_font(8), bg=CARD, fg=TEXT_3).pack(side="left", padx=(10, 0))
+
+        self.ws_label = ttk.Label(top, text="NapCat WebSocket 地址", style="CardMuted.TLabel")
+        self.ws_label.grid(row=1, column=0, sticky="w", pady=4)
+        self.ws_entry = ttk.Entry(top, textvariable=self.url_var, width=34)
+        self.ws_entry.grid(row=1, column=1, sticky="ew", padx=(6, 18), pady=4)
+        self.token_label = ttk.Label(top, text="Access Token（可留空）", style="CardMuted.TLabel")
+        self.token_label.grid(row=1, column=2, sticky="w", pady=4)
+        self.token_entry = ttk.Entry(top, textvariable=self.token_var, show="•", width=24)
+        self.token_entry.grid(row=1, column=3, sticky="ew", padx=(6, 0), pady=4)
+
+        self.options_frame = tk.Frame(top, bg=CARD)
+        self.options_frame.grid(row=2, column=1, columnspan=3, sticky="w", pady=(6, 0))
+        self.group_check = ToggleChip(self.options_frame, "接收群消息", self.group_var)
+        self.group_check.pack(side="left")
+        self.auto_connect_check = ToggleChip(self.options_frame, "启动时自动连接",
+                                             self.auto_connect_var)
+        self.auto_connect_check.pack(side="left", padx=(10, 0))
+        self.auto_sync_check = ToggleChip(self.options_frame, "启动时同步今天消息",
+                                          self.auto_sync_var)
+        self.auto_sync_check.pack(side="left", padx=(10, 0))
+
+        self.mode_label = ttk.Label(top, text="分析方式", style="CardMuted.TLabel")
+        self.mode_label.grid(row=3, column=0, sticky="w", pady=(14, 0))
+        mode_frame = tk.Frame(top, bg=CARD)
+        mode_frame.grid(row=3, column=1, columnspan=3, sticky="w", pady=(14, 0))
         self.mode_rules_btn = ttk.Radiobutton(mode_frame, text="本地规则", value="rules",
                                               variable=self.mode_var, command=self._toggle_api_fields)
         self.mode_rules_btn.pack(side="left")
         self.mode_api_btn = ttk.Radiobutton(mode_frame, text="大模型 API（本机/远程）", value="api",
                                             variable=self.mode_var, command=self._toggle_api_fields)
-        self.mode_api_btn.pack(side="left", padx=(14, 0))
+        self.mode_api_btn.pack(side="left", padx=(16, 0))
 
-        self.api_endpoint_label = ttk.Label(top, text="API Endpoint：")
-        self.api_endpoint_label.grid(row=3, column=0, sticky="w", pady=(6, 0))
+        self.api_endpoint_label = ttk.Label(top, text="API Endpoint", style="CardMuted.TLabel")
+        self.api_endpoint_label.grid(row=4, column=0, sticky="w", pady=(6, 0))
         self.api_endpoint_entry = ttk.Entry(top, textvariable=self.api_endpoint_var)
-        self.api_endpoint_entry.grid(row=3, column=1, columnspan=2, sticky="ew", padx=(4, 10), pady=(6, 0))
+        self.api_endpoint_entry.grid(row=4, column=1, columnspan=2, sticky="ew",
+                                     padx=(6, 10), pady=(6, 0))
         self.api_preset_box = ttk.Combobox(top, textvariable=self.api_preset_var,
-                                           values=tuple(API_PRESETS) + ("自定义",), state="readonly", width=12)
-        self.api_preset_box.grid(row=3, column=3, sticky="w", padx=(4, 10), pady=(6, 0))
+                                           values=tuple(API_PRESETS) + ("自定义",),
+                                           state="readonly", width=12)
+        self.api_preset_box.grid(row=4, column=3, sticky="w", padx=(6, 0), pady=(6, 0))
         self.api_preset_box.bind("<<ComboboxSelected>>", lambda _event: self._apply_api_preset())
 
-        self.api_model_label = ttk.Label(top, text="API Model（模型名）：")
-        self.api_model_label.grid(row=4, column=0, sticky="w", pady=(6, 0))
+        self.api_model_label = ttk.Label(top, text="API Model（模型名）", style="CardMuted.TLabel")
+        self.api_model_label.grid(row=5, column=0, sticky="w", pady=(6, 0))
         self.api_model_entry = ttk.Entry(top, textvariable=self.api_model_var, width=28)
-        self.api_model_entry.grid(row=4, column=1, sticky="ew", padx=(4, 10), pady=(6, 0))
-        self.api_key_label = ttk.Label(top, text="API Key（加密保存；远程必填）：")
-        self.api_key_label.grid(row=4, column=2, sticky="e", pady=(6, 0))
+        self.api_model_entry.grid(row=5, column=1, sticky="ew", padx=(6, 18), pady=(6, 0))
+        self.api_key_label = ttk.Label(top, text="API Key（加密保存；远程必填）", style="CardMuted.TLabel")
+        self.api_key_label.grid(row=5, column=2, sticky="w", pady=(6, 0))
         self.api_key_entry = ttk.Entry(top, textvariable=self.api_key_var, show="•", width=24)
-        self.api_key_entry.grid(row=4, column=3, sticky="ew", padx=(4, 10), pady=(6, 0))
-        self.api_hint_label = ttk.Label(top, text="本机端点默认允许；远程需 HTTPS + 知情确认。Key/Token 用 Windows DPAPI 加密保存在本机。",
-                                        foreground="#5c6b7a")
-        self.api_hint_label.grid(row=5, column=1, columnspan=3, sticky="w", pady=(6, 0))
-        self.remote_consent_check = ttk.Checkbutton(
-            top, text="我知晓远程 API 会把消息文本发送给该服务商",
-            variable=self.remote_consent_var, command=self._toggle_api_fields)
-        self.remote_consent_check.grid(row=6, column=1, columnspan=3, sticky="w", pady=(6, 0))
+        self.api_key_entry.grid(row=5, column=3, sticky="ew", padx=(6, 0), pady=(6, 0))
+        self.api_hint_label = ttk.Label(
+            top, style="CardMuted.TLabel",
+            text="本机端点默认允许；远程需 HTTPS + 知情确认。Key/Token 用 Windows DPAPI 加密保存在本机。")
+        self.api_hint_label.grid(row=6, column=1, columnspan=3, sticky="w", pady=(6, 0))
+        self.remote_consent_check = ToggleChip(
+            top, "我知晓远程 API 会把消息文本发送给该服务商",
+            self.remote_consent_var, command=self._toggle_api_fields)
+        self.remote_consent_check.grid(row=7, column=1, columnspan=3, sticky="w", pady=(6, 0))
         self.api_widgets = (self.api_endpoint_label, self.api_endpoint_entry, self.api_preset_box,
                             self.api_model_label, self.api_model_entry, self.api_key_label,
                             self.api_key_entry, self.api_hint_label, self.remote_consent_check)
         self.connection_widgets = (self.ws_label, self.ws_entry, self.token_label, self.token_entry,
                                    self.options_frame, self.mode_label, mode_frame) + self.api_widgets
-
-        btns = ttk.Frame(top)
-        btns.grid(row=7, column=1, columnspan=3, sticky="e", pady=(8, 0))
-        self.sync_btn = ttk.Button(btns, text="同步今天消息", command=self.start_today_sync)
-        self.sync_btn.pack(side="left", padx=4)
-        self.import_btn = ttk.Button(btns, text="导入历史消息…", command=self.open_import_dialog)
-        self.import_btn.pack(side="left", padx=4)
-        self.start_btn = ttk.Button(btns, text="开始监听新消息", command=self.start_listener)
-        self.start_btn.pack(side="left", padx=4)
-        self.stop_btn = ttk.Button(btns, text="停止监听", command=self.stop_listener, state="disabled")
-        self.stop_btn.pack(side="left", padx=4)
         top.columnconfigure(1, weight=1)
         top.columnconfigure(3, weight=1)
 
-        ttk.Label(self.root, textvariable=self.status, padding=(14, 4)).pack(fill="x")
-        ttk.Label(self.root, text="隐私说明：QQ 接入仅限本机 WebSocket；历史导入只访问本机 NapCat HTTP；默认只调用本机模型。勾选远程 API 后，消息文本会发送给所配置服务商；Key/Token 使用 Windows DPAPI 加密保存在本机，可在底部清除；消息只保存在本机 SQLite。",
-                  foreground="#8a3d00", wraplength=1080).pack(fill="x", padx=14, pady=(0, 8))
-
-        bottom = ttk.Frame(self.root, padding=(14, 0, 14, 8))
-        bottom.pack(side="bottom", fill="x")
-        ttk.Label(bottom, text=f"本地数据目录：{data_dir()}").pack(side="left", fill="x", expand=True)
-        ttk.Button(bottom, text="清除已保存凭据", command=self.clear_credentials).pack(side="right", padx=(0, 8))
-        ttk.Button(bottom, text="清空本地消息和待办…", command=self.clear_data).pack(side="right")
-
-        self.tabs = ttk.Notebook(self.root)
-        self.tabs.pack(fill="both", expand=True, padx=14, pady=(0, 10))
-        self.dashboard = DashboardFrame(self.tabs, on_detail=self.show_dashboard_detail,
-                                        on_confirm=self.dashboard_confirm, on_dismiss=self.dashboard_dismiss,
+    def _build_pages(self):
+        self.dashboard = DashboardFrame(self.content_holder, on_detail=self.show_dashboard_detail,
+                                        on_confirm=self.dashboard_confirm,
+                                        on_dismiss=self.dashboard_dismiss,
                                         on_complete=self.dashboard_complete)
-        self.tabs.add(self.dashboard, text="事务中心")
-        self.competition_tab = ttk.Frame(self.tabs, padding=8)
-        self.tabs.add(self.competition_tab, text="比赛/竞赛")
-        self.msg_tab = ttk.Frame(self.tabs, padding=8)
-        self.tabs.add(self.msg_tab, text="最近消息")
-        self.review_tab = ttk.Frame(self.tabs, padding=8)
-        self.tabs.add(self.review_tab, text="待审核事务")
-        self.todo_tab = ttk.Frame(self.tabs, padding=8)
-        self.tabs.add(self.todo_tab, text="已确认待办")
-        self.contact_tab = ttk.Frame(self.tabs, padding=8)
-        self.tabs.add(self.contact_tab, text="联系人排序")
+        self.nav.add_page("dashboard", "事务中心", self.dashboard)
 
-        self._create_tree(self.msg_tab, "messages", ("time", "contact", "kind", "priority", "text"),
-                          ("时间", "联系人/群", "分类", "优先级", "消息摘要"), (145, 180, 140, 70, 520))
-        review_buttons = ttk.Frame(self.review_tab)
-        review_buttons.pack(side="bottom", fill="x", pady=(8, 0))
-        ttk.Button(review_buttons, text="查看原消息", command=lambda: self.show_selected("review")).pack(side="left", padx=3)
-        ttk.Button(review_buttons, text="确认加入待办", command=self.confirm_selected).pack(side="left", padx=3)
-        ttk.Button(review_buttons, text="忽略此候选", command=self.dismiss_selected).pack(side="left", padx=3)
-        self._create_tree(self.review_tab, "review", ("id", "priority", "importance", "contact", "category", "due", "title"),
-                          ("编号", "优先级", "分数", "联系人", "分类", "截止/提示", "候选事项（需人工确认）"),
-                          (55, 65, 55, 150, 130, 175, 400))
-        todo_buttons = ttk.Frame(self.todo_tab)
-        todo_buttons.pack(side="bottom", fill="x", pady=(8, 0))
-        ttk.Button(todo_buttons, text="查看原消息", command=lambda: self.show_selected("todos")).pack(side="left", padx=3)
-        ttk.Button(todo_buttons, text="标记完成", command=self.complete_selected).pack(side="left", padx=3)
-        self._create_tree(self.todo_tab, "todos", ("id", "priority", "importance", "contact", "category", "due", "title"),
-                          ("编号", "优先级", "分数", "联系人", "分类", "截止/提示", "已确认待办"),
-                          (55, 65, 55, 150, 130, 175, 400))
-        self._create_tree(self.contact_tab, "contacts",
-                          ("contact", "messages", "today", "pending", "confirmed", "reply", "max_priority", "max_score", "last_message", "rank_score"),
-                          ("联系人/群", "消息数", "今日", "待审核", "已确认", "待回复", "最高优先级", "最高分", "最近消息", "排序分"),
-                          (210, 65, 55, 75, 75, 65, 90, 65, 135, 65))
-        competition_buttons = ttk.Frame(self.competition_tab)
-        competition_buttons.pack(side="bottom", fill="x", pady=(8, 0))
-        self.competition_detail_btn = ttk.Button(competition_buttons, text="查看详情",
-                                                 command=self.competition_detail, state="disabled")
-        self.competition_confirm_btn = ttk.Button(competition_buttons, text="确认加入待办",
-                                                  command=self.competition_confirm, state="disabled")
-        self.competition_dismiss_btn = ttk.Button(competition_buttons, text="忽略此候选",
-                                                  command=self.competition_dismiss, state="disabled")
-        self.competition_complete_btn = ttk.Button(competition_buttons, text="标记完成",
-                                                   command=self.competition_complete, state="disabled")
+        self.competition_tab, competition_card = self._make_page(
+            "比赛/竞赛", "比赛与竞赛相关信息集中展示，待确认 / 已确认 / 已完成")
+        competition_body = self._card_body(competition_card)
+        competition_buttons = tk.Frame(competition_body, bg=CARD)
+        competition_buttons.pack(fill="x", pady=(0, 12))
+        self.competition_detail_btn = RoundedButton(
+            competition_buttons, text="查看详情", kind="ghost",
+            command=self.competition_detail, state="disabled")
+        self.competition_confirm_btn = RoundedButton(
+            competition_buttons, text="确认加入待办", kind="primary",
+            command=self.competition_confirm, state="disabled")
+        self.competition_dismiss_btn = RoundedButton(
+            competition_buttons, text="忽略此候选", kind="danger",
+            command=self.competition_dismiss, state="disabled")
+        self.competition_complete_btn = RoundedButton(
+            competition_buttons, text="标记完成", kind="primary",
+            command=self.competition_complete, state="disabled")
         for button in (self.competition_detail_btn, self.competition_confirm_btn,
                        self.competition_dismiss_btn, self.competition_complete_btn):
-            button.pack(side="left", padx=(0, 6))
-        self._create_tree(self.competition_tab, "competition",
+            button.pack(side="left", padx=(0, 8))
+        self._create_tree(competition_body, "competition",
                           ("id", "priority", "status", "contact", "category", "due", "title"),
                           ("编号", "优先级", "状态", "联系人/群", "分类", "截止/提示", "比赛/竞赛事项"),
-                          (55, 65, 75, 170, 150, 175, 380))
-        self.competition_tree.tag_configure("P0", foreground="#c0392b")
-        self.competition_tree.tag_configure("P1", foreground="#b45309")
-        self.competition_tree.tag_configure("pending", background="#fff8e1")
-        self.competition_tree.tag_configure("overdue", background="#fee2e2")
+                          (45, 55, 60, 190, 155, 180, 330), empty_text="暂无比赛/竞赛事项")
+        self.competition_tree.tag_configure("P0", foreground=DANGER)
+        self.competition_tree.tag_configure("P1", foreground=WARNING)
+        self.competition_tree.tag_configure("pending", background=AMBER_SOFT)
+        self.competition_tree.tag_configure("overdue", background=RED_SOFT)
         self.competition_tree.bind("<Double-1>", lambda _event: self.competition_detail())
         self.competition_tree.bind("<<TreeviewSelect>>", self._competition_on_select)
         self.competition_selected = None
+        self.nav.add_page("competition", "比赛/竞赛", self.competition_tab)
 
-    def _create_tree(self, parent, name, keys, headers, widths):
-        holder = ttk.Frame(parent)
+        self.msg_tab, msg_card = self._make_page("最近消息", "本地保存的最近 500 条文本，按接收时间倒序")
+        self._create_tree(self._card_body(msg_card), "messages",
+                          ("time", "contact", "kind", "priority", "text"),
+                          ("时间", "联系人/群", "分类", "优先级", "消息摘要"),
+                          (145, 180, 140, 60, 450), empty_text="暂无本地消息")
+        self.nav.add_page("messages", "最近消息", self.msg_tab)
+
+        self.review_tab, review_card = self._make_page("待审核事务", "候选事项经你确认后才进入待办")
+        review_body = self._card_body(review_card)
+        review_buttons = tk.Frame(review_body, bg=CARD)
+        review_buttons.pack(fill="x", pady=(0, 12))
+        self.review_detail_btn = RoundedButton(
+            review_buttons, text="查看原消息", kind="ghost", state="disabled",
+            command=lambda: self.show_selected("review"))
+        self.review_detail_btn.pack(side="left", padx=(0, 8))
+        self.review_confirm_btn = RoundedButton(
+            review_buttons, text="确认加入待办", kind="primary", state="disabled",
+            command=self.confirm_selected)
+        self.review_confirm_btn.pack(side="left", padx=(0, 8))
+        self.review_dismiss_btn = RoundedButton(
+            review_buttons, text="忽略此候选", kind="danger", state="disabled",
+            command=self.dismiss_selected)
+        self.review_dismiss_btn.pack(side="left")
+        self._create_tree(review_body, "review",
+                          ("id", "priority", "importance", "contact", "category", "due", "title"),
+                          ("编号", "优先级", "分数", "联系人", "分类", "截止/提示", "候选事项（需人工确认）"),
+                          (45, 55, 50, 180, 150, 185, 320), empty_text="暂无待审核候选")
+        self.review_tree.bind("<<TreeviewSelect>>", lambda _event: self._update_page_buttons())
+        self.nav.add_page("review", "待审核事务", self.review_tab)
+
+        self.todo_tab, todo_card = self._make_page("已确认待办", "已经确认、等待处理或完成的事务")
+        todo_body = self._card_body(todo_card)
+        todo_buttons = tk.Frame(todo_body, bg=CARD)
+        todo_buttons.pack(fill="x", pady=(0, 12))
+        self.todo_detail_btn = RoundedButton(
+            todo_buttons, text="查看原消息", kind="ghost", state="disabled",
+            command=lambda: self.show_selected("todos"))
+        self.todo_detail_btn.pack(side="left", padx=(0, 8))
+        self.todo_complete_btn = RoundedButton(
+            todo_buttons, text="标记完成", kind="primary", state="disabled",
+            command=self.complete_selected)
+        self.todo_complete_btn.pack(side="left")
+        self._create_tree(todo_body, "todos",
+                          ("id", "priority", "importance", "contact", "category", "due", "title"),
+                          ("编号", "优先级", "分数", "联系人", "分类", "截止/提示", "已确认待办"),
+                          (45, 55, 50, 180, 150, 185, 320), empty_text="暂无已确认待办")
+        self.todos_tree.bind("<<TreeviewSelect>>", lambda _event: self._update_page_buttons())
+        self.nav.add_page("todos", "已确认待办", self.todo_tab)
+
+        self.contact_tab, contact_card = self._make_page(
+            "联系人排序", "按待处理工作量排序，不对联系人个人价值作评价")
+        self._create_tree(self._card_body(contact_card), "contacts",
+                          ("contact", "messages", "today", "pending", "confirmed", "reply",
+                           "max_priority", "max_score", "last_message", "rank_score"),
+                          ("联系人/群", "消息数", "今日", "待审核", "已确认", "待回复",
+                           "最高优先级", "最高分", "最近消息", "排序分"),
+                          (200, 65, 55, 72, 72, 65, 88, 62, 140, 62),
+                          empty_text="暂无联系人数据")
+        self.nav.add_page("contacts", "联系人排序", self.contact_tab)
+
+    def _make_page(self, title, subtitle):
+        page = tk.Frame(self.content_holder, bg=BG)
+        head = tk.Frame(page, bg=BG)
+        head.pack(fill="x", pady=(0, 14))
+        tk.Label(head, text=title, font=ui_font(18, "bold"),
+                 bg=BG, fg=TEXT).pack(side="left")
+        tk.Label(head, text=subtitle, font=ui_font(9), bg=BG,
+                 fg=TEXT_3).pack(side="left", padx=(12, 0), pady=(7, 0))
+        card = RoundedFrame(page, radius=RADIUS_LG, fill=CARD,
+                            outline=BORDER, bg=BG)
+        card.pack(fill="both", expand=True)
+        return page, card
+
+    @staticmethod
+    def _card_body(card):
+        parent = getattr(card, "content", card)
+        body = tk.Frame(parent, bg=CARD)
+        body.pack(fill="both", expand=True, padx=18, pady=14)
+        return body
+
+    def _load_logo(self):
+        path = Path(__file__).resolve().parent.parent / "assets" / "icon.png"
+        try:
+            image = tk.PhotoImage(file=str(path))
+        except (tk.TclError, OSError):
+            return None
+        factor = max(1, image.width() // 34)
+        if factor > 1:
+            image = image.subsample(factor, factor)
+        return image
+
+    def _toggle_settings_panel(self):
+        self._set_connection_settings_visible(not self.settings_visible)
+
+    def _sync_status_visual(self):
+        text = self.status.get()
+        color = label = None
+        if "已停止监听" in text or "自动连接未启动" in text or "未连接" in text:
+            color, label = TEXT_3, "未连接"
+        elif "已连接" in text:
+            color, label = SUCCESS, "已连接"
+        elif any(token in text for token in
+                 ("连接异常", "连接错误", "断开", "重连", "正在连接")):
+            color, label = WARNING, "连接中"
+        if color is None:
+            return
+        self.conn_pill.set_dot_color(color)
+        self.conn_var.set(label)
+        self.status_dot.configure(fg=color)
+
+    def _show_privacy(self):
+        window = tk.Toplevel(self.root)
+        window.title("隐私说明")
+        window.geometry("660x440")
+        window.configure(bg=CARD)
+        window.transient(self.root)
+        accent_row = tk.Frame(window, bg=CARD)
+        accent_row.pack(fill="x", pady=(10, 0))
+        RoundedBar(accent_row, width=44, height=4, fill=BLUE, bg=CARD).pack(anchor="center")
+        head = tk.Frame(window, bg=CARD)
+        head.pack(fill="x", padx=22, pady=(12, 8))
+        tk.Label(head, text="隐私说明", font=ui_font(16, "bold"),
+                 bg=CARD, fg=TEXT).pack(anchor="w")
+        tk.Label(head, text="本地优先 · 最小外发 · 可随时清除", font=ui_font(9),
+                 bg=CARD, fg=TEXT_3).pack(anchor="w", pady=(4, 0))
+        detail = (
+            "QQ 接入仅限本机 WebSocket；历史导入只访问本机 NapCat HTTP；默认只调用本机模型。\n\n"
+            "勾选远程 API 并确认后，消息文本会发送给所配置服务商；不勾选则不会外发。\n\n"
+            "API Key 与 NapCat Token 使用 Windows DPAPI 加密保存在本机，可在底部清除；"
+            "远程知情确认也会一并取消。\n\n"
+            "消息与待办只保存在本机 SQLite，不会上传。清空本地数据会永久删除这些记录。\n\n"
+            f"本地数据目录：{data_dir()}"
+        )
+        tk.Label(window, text=detail, justify="left", anchor="nw", wraplength=600,
+                 font=ui_font(10), bg=CARD, fg=TEXT_2).pack(
+            fill="both", expand=True, padx=22, pady=(6, 8))
+        RoundedButton(window, text="关闭", kind="primary", command=window.destroy).pack(
+            anchor="e", padx=22, pady=(0, 18))
+        window.bind("<Escape>", lambda _event: window.destroy())
+
+    def _create_tree(self, parent, name, keys, headers, widths, empty_text="暂无记录"):
+        holder = tk.Frame(parent, bg=CARD)
         holder.pack(fill="both", expand=True)
         tree = ttk.Treeview(holder, columns=keys, show="headings", selectmode="browse")
         for key, header, width in zip(keys, headers, widths):
             tree.heading(key, text=header)
-            tree.column(key, width=width, minwidth=45, stretch=(key in {"text", "title"}))
+            tree.column(key, width=width, minwidth=45,
+                        stretch=(key in {"text", "title", "contact"}))
         yscroll = ttk.Scrollbar(holder, orient="vertical", command=tree.yview)
         xscroll = ttk.Scrollbar(holder, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
@@ -260,6 +459,8 @@ class InboxApp:
         holder.rowconfigure(0, weight=1)
         holder.columnconfigure(0, weight=1)
         setattr(self, f"{name}_tree", tree)
+        empty = tk.Label(holder, text=empty_text, font=ui_font(10), bg=CARD, fg=TEXT_3)
+        setattr(self, f"{name}_empty", empty)
         tree.bind("<Double-1>", lambda _event, tree_name=name: self.show_selected(tree_name))
 
     def _toggle_api_fields(self):
@@ -288,13 +489,14 @@ class InboxApp:
 
     def _set_connection_settings_visible(self, visible: bool):
         if visible:
-            for widget in self.connection_widgets:
-                if widget not in self.api_widgets:
-                    widget.grid()
+            if not self.settings_card.winfo_manager():
+                self.settings_card.pack(fill="x", before=self.content_holder)
             self._toggle_api_fields()
         else:
-            for widget in self.connection_widgets:
-                widget.grid_remove()
+            self.settings_card.pack_forget()
+        self.settings_visible = visible
+        self.settings_toggle_btn.configure(
+            text="收起连接设置" if visible else "连接设置")
 
     def _apply_api_preset(self):
         preset = self.api_preset_var.get()
@@ -355,8 +557,10 @@ class InboxApp:
             else:
                 messagebox.showerror("无法启动监听", str(exc), parent=self.root)
             return
+        self.start_btn.pack_forget()
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
+        self.stop_btn.pack(side="right", padx=(8, 0), before=self.sync_btn)
         self.status.set("正在连接…仅接收启用后的新事件；不会自动读取历史消息。")
         if self.auto_sync_var.get() and not self.auto_sync_attempted:
             self.auto_sync_attempted = True
@@ -442,8 +646,10 @@ class InboxApp:
             self.listener.stop()
             self.listener = None
         self._set_connection_settings_visible(True)
-        self.start_btn.configure(state="normal")
+        self.stop_btn.pack_forget()
         self.stop_btn.configure(state="disabled")
+        self.start_btn.configure(state="normal")
+        self.start_btn.pack(side="right", padx=(8, 0), before=self.sync_btn)
         self.status.set("已停止监听")
 
     def _on_event(self, event, text):
@@ -562,16 +768,18 @@ class InboxApp:
             for row in list_todos(status):
                 tree.insert("", "end", iid=str(row["id"]), values=(
                     row["id"], row["priority"], row["importance"], row["chat_label"], row["category"],
-                    row["due_display"] or row["due_hint"] or "待核对", row["title"][:300]))
-        self.tabs.tab(self.review_tab, text=f"待审核事务（{len(self.review_tree.get_children())}）")
-        self.tabs.tab(self.todo_tab, text=f"已确认待办（{len(self.todos_tree.get_children())}）")
+                    format_due_display(row["due_date"], row["due_display"], row["due_hint"]),
+                    row["title"][:300]))
+        self.nav.set_text("review", f"待审核事务 {len(self.review_tree.get_children())}")
+        self.nav.set_text("todos", f"已确认待办 {len(self.todos_tree.get_children())}")
+        self.nav.set_text("messages", f"最近消息 {len(self.messages_tree.get_children())}")
         today = date.today().isoformat()
         for row in list_competition_items(500):
             status = row["status"]
             tags = [row["priority"]]
             if status == "pending_review":
                 tags.append("pending")
-            due_text = row["due_display"] or row["due_hint"] or "待核对"
+            due_text = format_due_display(row["due_date"], row["due_display"], row["due_hint"])
             if row["due_date"] and row["due_date"] < today:
                 due_text = "逾期 · " + due_text
                 tags.append("overdue")
@@ -579,9 +787,17 @@ class InboxApp:
             self.competition_tree.insert("", "end", iid=f"{status}:{row['id']}", tags=tuple(tags), values=(
                 row["id"], row["priority"], status_text, row["chat_label"], row["category"],
                 due_text, row["title"][:300]))
+        for name in ("messages", "review", "todos", "contacts", "competition"):
+            tree = getattr(self, f"{name}_tree")
+            empty = getattr(self, f"{name}_empty")
+            if tree.get_children():
+                empty.place_forget()
+            else:
+                empty.place(relx=0.5, rely=0.5, anchor="center")
         self.competition_selected = None
         self._update_competition_buttons()
-        self.tabs.tab(self.competition_tab, text=f"比赛/竞赛（{len(self.competition_tree.get_children())}）")
+        self._update_page_buttons()
+        self.nav.set_text("competition", f"比赛/竞赛 {len(self.competition_tree.get_children())}")
 
     def _selected_row(self, tree_name):
         tree = getattr(self, f"{tree_name}_tree")
@@ -624,7 +840,7 @@ class InboxApp:
                 self._show_todo_detail(row)
 
     def _show_todo_detail(self, row):
-        due_display = row["due_display"] or row["due_hint"] or "未识别"
+        due_display = format_due_display(row["due_date"], row["due_display"], row["due_hint"])
         meta = (f"候选编号：{row['id']}\n联系人：{row['chat_label']}\n分类：{row['category']}\n"
                 f"优先级：{row['priority']}（分数 {row['importance']}）\n"
                 f"截止/提示：{due_display}\n原始时间提示：{row['due_hint'] or '无'}\n"
@@ -635,16 +851,47 @@ class InboxApp:
 
     def _show_detail_window(self, meta, text):
         window = tk.Toplevel(self.root)
-        window.title("消息详情 · 本地")
-        window.geometry("720x460")
-        window.configure(bg=PAGE_BG)
+        window.title("详情 · 本地")
+        window.geometry("780x560")
+        window.minsize(640, 460)
+        window.configure(bg=BG)
         window.transient(self.root)
-        ttk.Label(window, text=meta, justify="left", wraplength=680).pack(fill="x", padx=14, pady=12)
-        ttk.Label(window, text="原始文字（本地保存）", font=(UI_FONT[0], 10, "bold")).pack(anchor="w", padx=14)
-        box = tk.Text(window, wrap="word", height=10)
-        box.pack(fill="both", expand=True, padx=14, pady=(4, 14))
+        accent_row = tk.Frame(window, bg=CARD)
+        accent_row.pack(fill="x", pady=(10, 0))
+        RoundedBar(accent_row, width=44, height=4, fill=BLUE, bg=CARD).pack(anchor="center")
+
+        head = tk.Frame(window, bg=CARD)
+        head.pack(fill="x", padx=22, pady=(12, 10))
+        title_box = tk.Frame(head, bg=CARD)
+        title_box.pack(side="left")
+        tk.Label(title_box, text="事项详情", font=ui_font(15, "bold"),
+                 bg=CARD, fg=TEXT).pack(anchor="w")
+        tk.Label(title_box, text="内容仅在本机展示", font=ui_font(8),
+                 bg=CARD, fg=TEXT_3).pack(anchor="w", pady=(3, 0))
+        RoundedButton(head, text="关闭", kind="ghost", height=32, padx=14,
+                      command=window.destroy).pack(side="right")
+
+        body = tk.Frame(window, bg=BG)
+        body.pack(fill="both", expand=True, padx=22, pady=(0, 18))
+        meta_card = RoundedFrame(body, radius=12, fill=CARD, outline=BORDER, bg=BG)
+        meta_card.pack(fill="x")
+        tk.Label(meta_card.content, text=meta, justify="left", anchor="w", wraplength=680,
+                 font=ui_font(9), bg=CARD, fg=TEXT_2).pack(fill="x", padx=16, pady=14)
+        tk.Label(body, text="原始文字（本地保存）", font=ui_font(10, "bold"),
+                 bg=BG, fg=TEXT).pack(anchor="w", pady=(14, 6))
+
+        text_holder = RoundedFrame(body, radius=12, fill=CARD, outline=BORDER, bg=BG)
+        text_holder.pack(fill="both", expand=True)
+        box = tk.Text(text_holder.content, wrap="word", font=ui_font(10), bg=CARD, fg=TEXT,
+                      relief="flat", bd=0, padx=14, pady=12, insertbackground=TEXT,
+                      selectbackground=BLUE_SOFT, selectforeground=TEXT)
+        scroll = ttk.Scrollbar(text_holder.content, orient="vertical", command=box.yview)
+        box.configure(yscrollcommand=scroll.set)
+        box.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
         box.insert("1.0", text)
         box.configure(state="disabled")
+        window.bind("<Escape>", lambda _event: window.destroy())
 
     def show_dashboard_detail(self, status, todo_id):
         rows = list_todos("pending_review" if status == "pending_review" else "confirmed")
@@ -688,6 +935,15 @@ class InboxApp:
     def dashboard_complete(self, todo_id):
         if review_todo(todo_id, "done"):
             self.refresh_all()
+
+    def _update_page_buttons(self):
+        review_ready = bool(self.review_tree.selection())
+        for button in (self.review_detail_btn, self.review_confirm_btn,
+                       self.review_dismiss_btn):
+            button.configure(state="normal" if review_ready else "disabled")
+        todo_ready = bool(self.todos_tree.selection())
+        self.todo_detail_btn.configure(state="normal" if todo_ready else "disabled")
+        self.todo_complete_btn.configure(state="normal" if todo_ready else "disabled")
 
     def _competition_on_select(self, _event=None):
         selection = self.competition_tree.selection()

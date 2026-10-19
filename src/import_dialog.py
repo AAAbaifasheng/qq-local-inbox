@@ -9,16 +9,19 @@ from .classifier import classify_message, message_context
 from .localnet import is_remote_url
 from .napcat_api import NapCatClient, validate_local_http_url
 from .store import insert_event
+from .theme import (AMBER_SOFT, BG, BLUE, BLUE_HOVER, BLUE_SOFT, BORDER, CARD,
+                    RADIUS_LG, TEXT, TEXT_2, TEXT_3, RoundedBar, RoundedButton,
+                    RoundedFrame, RoundedLabel, ui_font)
 
-PAGE_BG = "#f4f5f7"
+PAGE_BG = BG
 
 class HistoryImportDialog(tk.Toplevel):
     def __init__(self, parent, history_api_url, token_hint, mode, endpoint, model, api_key,
                  allow_remote=False, on_imported=None, on_url_change=None, on_http_token=None):
         super().__init__(parent)
         self.title("导入已有聊天记录 · 仅本机")
-        self.geometry("660x450")
-        self.minsize(620, 430)
+        self.geometry("760x580")
+        self.minsize(700, 540)
         self.configure(bg=PAGE_BG)
         self.transient(parent)
         self.mode = mode
@@ -39,65 +42,107 @@ class HistoryImportDialog(tk.Toplevel):
         self.after(100, self._poll)
 
     def _build(self, history_api_url, token_hint):
+        remote = self.mode == "api" and is_remote_url(self.endpoint)
         note = "只读取你选择的这个会话最近 N 条文本，保存到本地 SQLite；不下载图片/文件。"
-        if self.mode == "api" and is_remote_url(self.endpoint):
-            if self.allow_remote:
-                note += "当前为远程 API：导入的每条文本会发送给服务商。"
-            else:
-                note += "当前端点为远程地址，尚未授权；导入前请先在主窗口勾选“允许远程 API”。"
+        if remote and self.allow_remote:
+            note += "当前为远程 API：导入的每条文本会发送给服务商。"
+        elif remote:
+            note += "当前端点为远程地址，尚未授权；导入前请先在主窗口勾选“允许远程 API”。"
         else:
             note += "不发送到远程服务。"
-        ttk.Label(self, padding=(14, 12, 14, 4), wraplength=610, foreground="#8a3d00",
-                  text=note).pack(fill="x")
-        form = ttk.Frame(self, padding=(14, 6))
-        form.pack(fill="x")
+        warning = remote and not self.allow_remote
+
+        accent_row = tk.Frame(self, bg=CARD)
+        accent_row.pack(fill="x", pady=(10, 0))
+        RoundedBar(accent_row, width=44, height=4, fill=BLUE, bg=CARD).pack(anchor="center")
+        header = tk.Frame(self, bg=CARD)
+        header.pack(fill="x")
+        title_box = tk.Frame(header, bg=CARD)
+        title_box.pack(side="left", padx=22, pady=(12, 12))
+        tk.Label(title_box, text="导入历史消息", font=ui_font(16, "bold"),
+                 bg=CARD, fg=TEXT).pack(anchor="w")
+        tk.Label(title_box, text="从本机 NapCat 读取指定会话的历史文本", font=ui_font(8),
+                 bg=CARD, fg=TEXT_3).pack(anchor="w", pady=(3, 0))
+        RoundedLabel(header, text="仅本机", fill=BLUE_SOFT, fg=BLUE_HOVER,
+                     bg=CARD, padx=10, pady=4).pack(side="right", padx=22, pady=16)
+
+        content = tk.Frame(self, bg=BG)
+        content.pack(fill="both", expand=True, padx=20, pady=(14, 0))
+
+        note_bg = AMBER_SOFT if warning else BLUE_SOFT
+        note_fg = "#8A5A00" if warning else TEXT_2
+        note_card = RoundedFrame(content, radius=14, fill=note_bg, outline="",
+                                 bg=BG, padding=5)
+        note_card.pack(fill="x")
+        tk.Label(note_card.content, text=note, bg=note_bg, fg=note_fg, font=ui_font(9),
+                 justify="left", anchor="w", wraplength=600).pack(
+            fill="x", padx=12, pady=8)
+
+        form_card = RoundedFrame(content, radius=RADIUS_LG, fill=CARD,
+                                 outline=BORDER, bg=BG)
+        form_card.pack(fill="both", expand=True, pady=(12, 0))
+        form = tk.Frame(form_card.content, bg=CARD)
+        form.pack(fill="both", expand=True, padx=18, pady=(14, 6))
         form.columnconfigure(1, weight=1)
 
-        ttk.Label(form, text="NapCat HTTP 地址：").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Label(form, text="NapCat HTTP 地址", style="CardMuted.TLabel").grid(
+            row=0, column=0, sticky="w", pady=4)
         self.url_var = tk.StringVar(value=history_api_url)
-        ttk.Entry(form, textvariable=self.url_var).grid(row=0, column=1, columnspan=2, sticky="ew", padx=(4, 0), pady=4)
+        ttk.Entry(form, textvariable=self.url_var).grid(
+            row=0, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=4)
 
-        ttk.Label(form, text="HTTP Access Token（不保存）：").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(form, text="HTTP Access Token", style="CardMuted.TLabel").grid(
+            row=1, column=0, sticky="w", pady=4)
         self.token_var = tk.StringVar(value=token_hint or "")
-        ttk.Entry(form, textvariable=self.token_var, show="•").grid(row=1, column=1, columnspan=2, sticky="ew", padx=(4, 0), pady=4)
+        ttk.Entry(form, textvariable=self.token_var, show="•").grid(
+            row=1, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=4)
         ttk.Label(form, text="若 NapCat HTTP Server 未设置 Token，可留空。",
-                  foreground="#6b7078").grid(row=2, column=1, sticky="w", padx=(4, 0))
+                  style="CardMuted.TLabel").grid(row=2, column=1, sticky="w", padx=(8, 0))
 
-        ttk.Label(form, text="会话类型：").grid(row=3, column=0, sticky="w", pady=(10, 4))
+        ttk.Label(form, text="会话类型", style="CardMuted.TLabel").grid(
+            row=3, column=0, sticky="w", pady=(12, 4))
         self.kind_var = tk.StringVar(value="private")
-        kinds = ttk.Frame(form)
-        kinds.grid(row=3, column=1, columnspan=2, sticky="w", padx=(4, 0), pady=(10, 4))
+        kinds = tk.Frame(form, bg=CARD)
+        kinds.grid(row=3, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(12, 4))
         ttk.Radiobutton(kinds, text="好友私聊", value="private", variable=self.kind_var,
                         command=self._on_kind_change).pack(side="left")
         ttk.Radiobutton(kinds, text="群聊", value="group", variable=self.kind_var,
-                        command=self._on_kind_change).pack(side="left", padx=(14, 0))
+                        command=self._on_kind_change).pack(side="left", padx=(16, 0))
 
-        self.target_label = ttk.Label(form, text="QQ 号 / 好友：")
+        self.target_label = ttk.Label(form, text="QQ 号 / 好友", style="CardMuted.TLabel")
         self.target_label.grid(row=4, column=0, sticky="w", pady=4)
         self.target_var = tk.StringVar()
-        self.target_box = ttk.Combobox(form, textvariable=self.target_var, values=(), state="normal")
-        self.target_box.grid(row=4, column=1, sticky="ew", padx=(4, 0), pady=4)
-        self.load_btn = ttk.Button(form, text="读取列表", command=self._load_contacts)
+        self.target_box = ttk.Combobox(form, textvariable=self.target_var, values=(),
+                                       state="normal")
+        self.target_box.grid(row=4, column=1, sticky="ew", padx=(8, 0), pady=4)
+        self.load_btn = RoundedButton(form, text="读取列表", kind="ghost", height=32,
+                                      padx=13, command=self._load_contacts)
         self.load_btn.grid(row=4, column=2, sticky="e", padx=(8, 0), pady=4)
 
-        ttk.Label(form, text="导入条数：").grid(row=5, column=0, sticky="w", pady=4)
+        ttk.Label(form, text="导入条数", style="CardMuted.TLabel").grid(
+            row=5, column=0, sticky="w", pady=4)
         self.count_var = tk.StringVar(value="20")
         ttk.Spinbox(form, from_=1, to=200, textvariable=self.count_var, width=8).grid(
-            row=5, column=1, sticky="w", padx=(4, 0), pady=4)
+            row=5, column=1, sticky="w", padx=(8, 0), pady=4)
         mode_text = "本地规则（不调用模型）" if self.mode == "rules" else (
             f"远程 API（{self.model or '未填写模型'}）" if is_remote_url(self.endpoint)
             else f"本地大模型（{self.model or '未填写模型'}）")
-        ttk.Label(form, text=f"分析方式：{mode_text}").grid(row=5, column=2, sticky="e", pady=4)
+        ttk.Label(form, text=f"分析方式：{mode_text}", style="CardMuted.TLabel").grid(
+            row=5, column=2, sticky="e", pady=4)
 
-        buttons = ttk.Frame(self, padding=(14, 8))
-        buttons.pack(fill="x")
-        self.import_btn = ttk.Button(buttons, text="开始导入", command=self._start_import)
+        tk.Frame(form_card.content, bg="#F0F0F2", height=1).pack(fill="x")
+        buttons = tk.Frame(form_card.content, bg=CARD)
+        buttons.pack(fill="x", padx=18, pady=12)
+        self.import_btn = RoundedButton(buttons, text="开始导入", kind="primary",
+                                        command=self._start_import)
         self.import_btn.pack(side="left")
-        ttk.Button(buttons, text="关闭", command=self._close).pack(side="right")
+        RoundedButton(buttons, text="关闭", kind="ghost",
+                      command=self._close).pack(side="right")
 
         self.status_var = tk.StringVar(value="可以直接输入 QQ 号/群号，也可以先读取列表。")
-        ttk.Label(self, textvariable=self.status_var, padding=(14, 2, 14, 12),
-                  wraplength=610).pack(fill="x")
+        ttk.Label(self, textvariable=self.status_var, style="Muted.TLabel",
+                  wraplength=620, justify="left").pack(
+            fill="x", padx=22, pady=(10, 12))
 
     def _base_url(self):
         try:
