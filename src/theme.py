@@ -328,7 +328,12 @@ class RoundedButton(tk.Canvas):
         state = kwargs.pop("state", None)
         text = kwargs.pop("text", None)
         command = kwargs.pop("command", None)
+        kind = kwargs.pop("kind", None)
         changed = False
+        if kind is not None and kind != self._kind:
+            self._kind = kind
+            self._theme = BUTTON_KINDS.get(kind, BUTTON_KINDS["ghost"])
+            changed = True
         if state is not None:
             self._state = state
             super().configure(cursor="hand2" if state != "disabled" else "arrow")

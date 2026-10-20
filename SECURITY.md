@@ -2,7 +2,7 @@
 
 ## Supported version
 
-Security fixes are applied to the latest `main` branch. Older commits are not maintained.
+Security fixes are applied to the latest `main` branch and the latest release. Older commits are not maintained.
 
 ## Reporting a vulnerability
 
@@ -23,6 +23,7 @@ Relevant areas include:
 - remote API consent and API key handling
 - message text redaction, local SQLite storage, and data clearing
 - JSON parsing and prompt-injection boundaries in the model classifier
+- update manifest validation, download integrity, SHA256 verification, zip path checks, backup/rollback, and dev-checkout protection
 
 ## Data safety
 
@@ -46,6 +47,8 @@ If a credential was exposed, rotate it at the provider and remove it from the lo
 - NapCatQQ and QQ are third-party services. Use is subject to their terms, licenses, and local law.
 - Clearing local data uses SQLite `secure_delete` / WAL checkpoint / `VACUUM`, but cannot guarantee removal from SSD wear-levelling, snapshots, or backups.
 - The Chaoxing assignment reader is a best-effort userscript that parses page structure. 学习通 has no public student API; page changes can break extraction, and automated access may be subject to platform terms.
+- Auto-update trusts the GitHub repository/release account and the SHA256 in the release manifest. It does not provide code signing or protection if the upstream account or release pipeline is compromised. Auto-apply is skipped in git checkouts by default.
+- The PyInstaller build is not covered by source auto-update; packaged builds must be replaced manually in this version.
 
 ## Dependencies
 

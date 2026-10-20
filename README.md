@@ -10,6 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-21A96B?style=flat-square" alt="MIT"></a>
   <a href="PRIVACY.md"><img src="https://img.shields.io/badge/privacy-local--first-00AEEC?style=flat-square" alt="Local first"></a>
   <a href="docs/NAPCAT_SETUP.md"><img src="https://img.shields.io/badge/NapCat-OneBot%2011-FB7299?style=flat-square" alt="NapCat OneBot 11"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.3.0-6C5CE7?style=flat-square" alt="Version 0.3.0"></a>
 </p>
 
 <p align="center">
@@ -27,6 +28,12 @@
   <img src="docs/images/ui-overview.png" alt="事务中心界面" width="92%">
 </p>
 
+<p align="center">
+  <img src="docs/images/settings-drawer.png" alt="抽屉式设置面板" width="92%">
+</p>
+
+主界面只保留状态与三个主要动作；连接、模型、更新和数据清理都收进右侧抽屉。
+
 ## 核心能力
 
 | 模块 | 说明 |
@@ -37,6 +44,9 @@
 | 智能分拣 | 本地规则或 OpenAI 兼容模型；识别作业、比赛、项目、邀约、求助、材料、缴费、出行、就医 |
 | 群聊降噪 | 只有 @你、群公告/管理员要求、明确截止通知、比赛信息才进入候选；闲聊和广告只本地归档 |
 | 重复合并 | 同一会话、同一文本、同一截止日的活跃待办自动合并；学习通作业按课程+作业 ID 去重 |
+| 抽屉式设置 | 连接、模型、更新、数据四个页签；主界面不再被设置面板挤压 |
+| API 配置 | DeepSeek / Ollama / LM Studio 预设，自动拉取模型列表；测试连接只读模型列表，不发送聊天文本 |
+| 自动更新 | 从 GitHub Releases 检查并校验 SHA256，小版本自动下载、下次启动应用；更新前备份，失败回滚 |
 | 凭据与隐私 | API Key / NapCat Token / 学习通接入令牌用 Windows DPAPI 加密；远程 API 必须显式确认 |
 | 自动同步 | 启动自动连接 NapCat，并同步最近 50 个会话中今天有活动的内容 |
 | 历史导入 | 通过本机 NapCat HTTP 接口手动导入指定好友/群的最近 N 条文本 |
@@ -82,14 +92,15 @@ flowchart LR
 - 启动时默认自动连接 NapCat，并自动同步今天的最近会话消息；今日同步先用本地规则预筛，只有候选/待回复文本才会交给远程模型。
 - 群聊降噪：只有直接 @ 你、群主/管理员或群公告要求全体成员执行、带明确截止时间的作业/报名/提交通知、比赛/竞赛公开信息才进入候选；群内普通提问、讨论、玩笑、招募/代课/家教广告只本地入库，不生成待办。
 - 同一会话、同一文本、同一截止日的活跃待办会自动合并，避免实时与今日同步重复创建；历史重复候选在启动时合并。
-- 所有凭据可在界面底部“清除已保存凭据”一键删除；清除后不会删除消息与待办。
+- 所有凭据可在“设置 → 数据”一键删除；清除后不会删除消息与待办。
 - 只保留消息事件必要字段与纯文本；不保存完整原始事件 JSON，不下载/分析图片、文件、语音等附件。
-- 历史记录只在点击“导入历史”后，从本机 NapCat HTTP 接口读取你指定会话的最近 N 条文本；不会自动拉取，也不会读取其他会话。
+- 历史记录只在点击“导入历史消息”后，从本机 NapCat HTTP 接口读取你指定会话的最近 N 条文本；不会自动拉取，也不会读取其他会话。
 - 默认只接收私聊；群消息默认关闭。打开“接收群消息”后，实时群聊与今日同步使用同一范围：普通群聊只本地规则归档，只有候选/待回复文本才交给模型。
 - 不发送 QQ 消息、不自动回复、不自动接受邀约。
+- 更新检查只访问本项目的 GitHub Releases，不上传聊天记录、Token 或 API Key；更新包校验 SHA256，只覆盖运行文件，不触碰本地数据库和设置。
 - 学习通接入只读取作业元数据（课程、标题、截止时间、平台状态、链接），不保存账号密码或 Cookie，不下载附件，不自动提交；作业链接可能带课程定位参数，但只写入本机 SQLite。
 - 学习通接收服务只监听 `127.0.0.1`，每次请求必须携带随机令牌；令牌用 DPAPI 加密保存在 `secrets.dat`，脚本本身包含该令牌，请勿分享。
-- 本地数据默认位于 `%LOCALAPPDATA%\QQLocalInbox\`，包括 `inbox.sqlite3`、不含 Token/Key 的 `settings.json`，以及经 DPAPI 加密的 `secrets.dat`。
+- 本地数据默认位于 `%LOCALAPPDATA%\QQLocalInbox\`，包括 `inbox.sqlite3`、不含 Token/Key 的 `settings.json`、经 DPAPI 加密的 `secrets.dat`，以及下载中的更新包和备份。
 
 > QQ 本身以及 NapCat 的通信进程仍需要联网连接 QQ 服务。我们能约束的是此程序如何处理聊天消息，而不是保证整个 QQ 环境零网络流量。部署前应阅读 NapCat 当前版本的官方说明与隐私/安全行为。本机模型服务（Ollama/LM Studio）与远程服务（如 DeepSeek）是否记录请求、如何使用数据，由对应服务的配置与隐私政策决定。
 
@@ -143,21 +154,31 @@ flowchart LR
 ## 使用
 
 1. 确认 NapCat 已经运行，并配置 `ws://127.0.0.1:3001`（端口以实际配置为准）。
-2. 首次启动应用，点击右上角“连接设置”，输入 OneBot Access Token（NapCat 未设置 Token 时可留空），选择“本地规则”或“大模型 API”，点击“开始监听”。Token/Key 会用 DPAPI 加密保存；之后启动会按设置自动连接，不需要重复输入。
+2. 首次启动应用，点击右上角“设置”，在右侧抽屉的“连接”页输入 OneBot Access Token（NapCat 未设置 Token 时可留空），选择“本地规则”或“大模型 API”，点击“保存并连接”或右上角“开始监听”。Token/Key 会用 DPAPI 加密保存；之后启动会按设置自动连接，不需要重复输入。
 3. 应用会按设置自动同步今天的最近会话消息（默认开启）；开启群消息后，实时群聊也会进入“最近消息”。命中行动规则的消息会自动出现在“待审核事务”和首页“优先处理”。
 4. 在“事务中心”或“待审核事务”查看原消息，点击“确认加入待办”或“忽略此候选”。已确认项目可标记完成。“比赛/竞赛”页集中罗列所有比赛、竞赛事项（待确认/已确认/已完成），可直接查看详情、确认、忽略或标记完成。
-5. 如需处理更早的聊天记录，点击“导入历史”，填写本机 NapCat HTTP 地址（默认 `http://127.0.0.1:3000`）、HTTP Access Token，选择好友/群与条数后导入。导入使用当前分析模式，导入的候选仍需人工确认；远程模式下对话框会提示每条导入文本会发送给服务商。
-6. 点击“同步今天”可手动重跑今日同步。停止监听时点击“停止监听”或直接关闭窗口。需要修改连接设置时，先停止监听，或点击“连接设置”展开面板。
+5. 如需处理更早的聊天记录，打开“设置 → 数据”，点击“导入历史消息”，填写本机 NapCat HTTP 地址（默认 `http://127.0.0.1:3000`）、HTTP Access Token，选择好友/群与条数后导入。导入使用当前分析模式，导入的候选仍需人工确认；远程模式下对话框会提示每条导入文本会发送给服务商。
+6. 点击“同步今天”可手动重跑今日同步。停止监听时点击“停止监听”或直接关闭窗口。需要修改连接设置时，点击右上角“设置”打开抽屉即可，不必先停止监听。
 7. 可选：在“课程作业”页点击“接入说明”，按 [学习通作业接入](docs/CHAOXING_SETUP.md) 安装油猴脚本。同步到的作业默认是“待确认”；选中后可打开作业页、确认加入待办、忽略或标记完成。
 
 ### 使用 DeepSeek（远程 API）
 
-1. 在“大模型 API”模式选择 `DeepSeek` 预设；Endpoint 自动填 `https://api.deepseek.com/v1/chat/completions`，模型自动填 `deepseek-flash`。
+1. 打开“设置 → 模型”，选择“大模型 API”和 `DeepSeek` 预设；Endpoint 自动填 `https://api.deepseek.com/v1/chat/completions`，模型自动填 `deepseek-flash`，也可以点击“拉取模型”读取服务端模型列表。
 2. 勾选“我知晓远程 API 会把消息文本发送给该服务商”。
-3. 在 API Key 输入框填入 DeepSeek Key；Key 会用 Windows DPAPI 加密保存到当前 Windows 用户。
-4. 点击“开始监听”。私聊新消息逐条送 DeepSeek 分析；群聊先做本地规则和上下文预筛，普通讨论、提问、广告只本地入库，只有 @你、群公告/管理员要求、明确截止通知或比赛信息才送模型。发送给远程服务的只有消息文本与最少上下文（私聊/群聊、是否 @ 你、发送者角色），不发送群名称。
-5. Endpoint、模型名称与远程知情确认保存在 `settings.json`；Key 只以 DPAPI 加密形式保存在 `secrets.dat`。可在底部“清除已保存凭据”删除 Key/Token 并取消远程确认。
-6. 本机模型与远程模型可以随时切换；切换后停止再开始监听即可，不需要重新输入已保存的 Key。
+3. 在 API Key 输入框填入 DeepSeek Key；Key 会用 Windows DPAPI 加密保存到当前 Windows 用户。保存后输入框会清空，不会回显；留空表示保持原 Key。
+4. 点击“测试连接”只读取模型列表，不发送聊天文本；确认可用后点击“保存并连接”。
+5. 私聊新消息逐条送 DeepSeek 分析；群聊先做本地规则和上下文预筛，普通讨论、提问、广告只本地入库，只有 @你、群公告/管理员要求、明确截止通知或比赛信息才送模型。发送给远程服务的只有消息文本与最少上下文（私聊/群聊、是否 @ 你、发送者角色），不发送群名称。
+6. Endpoint、模型名称与远程知情确认保存在 `settings.json`；Key 只以 DPAPI 加密形式保存在 `secrets.dat`。可在“设置 → 数据”清除 Key/Token 并取消远程确认。
+7. 本机模型与远程模型可以随时切换；切换后点击“保存并连接”即可，不需要重新输入已保存的 Key。
+
+### 版本与自动更新
+
+- 当前版本显示在窗口标题和“设置 → 更新”页；版本变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+- 启动时会检查 GitHub Releases；发现小版本更新后自动下载并校验 SHA256，**下次启动时自动应用**，不会在分析或同步过程中替换文件。
+- 更新前会备份 `src/`、`assets/` 等运行文件；应用失败会尝试回滚。大版本更新只提示，需要手动确认。
+- “设置 → 更新”可以关闭自动检查、自动下载或自动应用，也可以手动“检查更新”或“立即重启并更新”。
+- 开发目录（存在 `.git`）默认不会自动覆盖，避免冲掉本地修改；源码安装和 PyInstaller 打包版的更新方式不同，打包版请手动替换。
+- 更新检查只访问本项目的 GitHub Releases，不上传聊天记录、Token 或 API Key。
 
 程序不会自动登录 QQ；启动时可同步今天最近会话，但不会补抓更早历史；不会自动替你答应邀约或回复联系人。连接中断期间的消息可能漏收，实时链路不追补历史记录；更早的记录只能由你手动导入。
 
@@ -196,6 +217,25 @@ DeepSeek 当前官方模型为 `deepseek-flash` 与 `deepseek-v4-pro`；应用�
 
 无需 QQ 登录即可运行规则、本机地址保护、远程端点知情确认、DPAPI 凭据加密、日期推算、NapCat 客户端（模拟 HTTP）、今日同步、SQLite 流程、学习通作业去重与截止时间解析、回环接收服务鉴权/CORS/请求大小限制，以及仪表盘统计测试。测试使用临时数据目录，不会触碰真实的 `%LOCALAPPDATA%\QQLocalInbox\`。
 
+## 发布
+
+当前发布流程（源码版）：
+
+```powershell
+# 1. 更新 VERSION 和 CHANGELOG.md，跑测试
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+
+# 2. 生成 zip 与 latest.json
+$env:GITHUB_REF_NAME = "v0.3.0"
+.\.venv\Scripts\python.exe scripts\build_release.py
+
+# 3. 创建 GitHub Release 并上传两个资产
+gh release create v0.3.0 release\QQLocalInbox-0.3.0.zip release\latest.json `
+  --title "QQ Local Inbox v0.3.0" --notes-file CHANGELOG.md
+```
+
+`scripts/release-workflow.yml` 是等价的 Actions 模板；要把发布完全自动化，需要给 GitHub 凭据补充 `workflow` 权限，然后把文件移动到 `.github/workflows/release.yml`。在此之前，手动执行上面的步骤即可，客户端更新检查仍然可用。
+
 ## 打包成 EXE（可选）
 
 ```powershell
@@ -218,6 +258,7 @@ DeepSeek 当前官方模型为 `deepseek-flash` 与 `deepseek-v4-pro`；应用�
 - 当前版本无消息编辑监听、撤回同步、文件下载、OCR、语音转写、桌面通知或定时提醒。
 - 本地 SQLite 当前没有应用层字段加密；请保护 Windows 账户，启用 BitLocker/设备加密，并确保备份加密。清空功能会尝试 checkpoint/VACUUM，但不保证清除 SSD 磨损均衡、系统快照或既有备份中的所有残留。
 - 历史导入依赖 NapCat HTTP Server，一次只读取所选会话最近 N 条文本；不下载媒体。导入文本按当前分析模式处理，远程模式下会发送给服务商；中途失败时已导入数据会保留，重试会按消息去重。
+- 自动更新只覆盖源码安装；PyInstaller 打包版需要手动替换。更新信任本项目的 GitHub 仓库与发布账号，SHA256 只能证明文件与清单一致，不能替代代码签名。
 - 若 NapCat 的 WS/HTTP Token 为空，程序允许留空连接，但任何本机进程都可能访问这些端口；共享电脑上建议为 NapCat 设置 Token 并在程序中填写。
 
 ## 技术结构
@@ -234,6 +275,15 @@ DeepSeek 当前官方模型为 `deepseek-flash` 与 `deepseek-v4-pro`；应用�
 - `src/onebot.py`：本机 WebSocket 接收、可选 Token、事件字段白名单与文本过滤
 - `src/classifier.py`：本地规则分类、群聊上下文降噪和优先级评分
 - `src/api_classifier.py`：本机或需确认的远程 OpenAI 兼容模型分类、JSON 容错与字段校验
+- `src/api_probe.py`：模型列表探测与连接测试；只读模型接口，不发送聊天文本
+- `src/api_config.py`：API 预设端点与默认模型
+- `src/settings_drawer.py`：右侧抽屉式设置、四页签与更新/探测状态展示
+- `src/updater.py`：更新清单校验、下载、SHA256、zip 安全解压、备份与回滚
+- `src/update_service.py`：后台检查与下载更新，结果通过事件队列回到界面
+- `src/bootstrap.py`：启动前应用已暂存更新并重启
+- `src/version.py`、`VERSION`：当前版本唯一来源
+- `scripts/build_release.py`：生成 Release zip 与 `latest.json`
+- `scripts/release-workflow.yml`：Actions 发布模板；启用前需要给 GitHub 凭据补充 `workflow` 权限并移动到 `.github/workflows/`
 - `src/store.py`：SQLite 本地消息、事务候选、状态、截止日期、去重与仪表盘统计
 - `src/config.py`：仅持久化非秘密设置；远程端点可保存，Key 与确认状态分离管理
 - `assets/icon.ico`：应用与桌面快捷方式图标

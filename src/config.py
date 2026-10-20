@@ -54,6 +54,9 @@ def load_settings() -> dict:
         "auto_sync_today": True,
         "allow_remote_api": False,
         "chaoxing_port": 8765,
+        "auto_check_updates": True,
+        "auto_download_updates": True,
+        "auto_apply_updates": True,
     }
     path = config_path()
     try:
@@ -67,7 +70,8 @@ def load_settings() -> dict:
     # Remote HTTPS endpoints are kept so the UI can require explicit consent at start.
     defaults["api_endpoint"] = _endpoint_or_default(defaults["api_endpoint"], LOCAL_API_DEFAULT)
     defaults["history_api_url"] = _local_or_default(defaults["history_api_url"], HISTORY_API_DEFAULT)
-    for key in ("include_group_messages", "auto_connect", "auto_sync_today", "allow_remote_api"):
+    for key in ("include_group_messages", "auto_connect", "auto_sync_today", "allow_remote_api",
+                "auto_check_updates", "auto_download_updates", "auto_apply_updates"):
         defaults[key] = bool(defaults.get(key, False))
     defaults["chaoxing_port"] = _port_or_default(defaults.get("chaoxing_port", 8765))
     return defaults
@@ -85,5 +89,8 @@ def save_settings(settings: dict) -> None:
         "auto_sync_today": bool(settings.get("auto_sync_today", True)),
         "allow_remote_api": bool(settings.get("allow_remote_api", False)),
         "chaoxing_port": _port_or_default(settings.get("chaoxing_port", 8765)),
+        "auto_check_updates": bool(settings.get("auto_check_updates", True)),
+        "auto_download_updates": bool(settings.get("auto_download_updates", True)),
+        "auto_apply_updates": bool(settings.get("auto_apply_updates", True)),
     }
     config_path().write_text(json.dumps(clean, ensure_ascii=False, indent=2), encoding="utf-8")

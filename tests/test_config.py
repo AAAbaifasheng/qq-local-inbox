@@ -52,6 +52,25 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(settings["auto_sync_today"])
         self.assertTrue(settings["allow_remote_api"])
 
+    def test_update_flags_default_on_and_persist(self):
+        self.assertTrue(load_settings()["auto_check_updates"])
+        self.assertTrue(load_settings()["auto_download_updates"])
+        self.assertTrue(load_settings()["auto_apply_updates"])
+        save_settings({"auto_check_updates": False, "auto_download_updates": False,
+                       "auto_apply_updates": False})
+        settings = load_settings()
+        self.assertFalse(settings["auto_check_updates"])
+        self.assertFalse(settings["auto_download_updates"])
+        self.assertFalse(settings["auto_apply_updates"])
+
+    def test_version_file_matches_module(self):
+        from pathlib import Path
+        from src.version import __version__
+        value = (Path(__file__).resolve().parents[1] / "VERSION").read_text(
+            encoding="utf-8").strip()
+        self.assertEqual(__version__, value)
+        self.assertRegex(value, r"^\d+\.\d+\.\d+$")
+
     def test_secrets_and_legacy_consent_are_not_written(self):
         save_settings({"ws_url": "ws://127.0.0.1:3001", "api_key": "sk-secret",
                        "access_token": "token-secret", "api_consent": True})

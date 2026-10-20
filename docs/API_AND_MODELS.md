@@ -61,14 +61,14 @@ https://api.deepseek.com/v1/chat/completions
 
 ### 3.2 配置步骤
 
-1. 在应用中选择“大模型 API”。
-2. Endpoint 预设选择 `DeepSeek`。
-3. 模型填 `deepseek-flash`。
-4. 填写 API Key。
-5. 勾选“我知晓远程 API 会把消息文本发送给该服务商”。
-6. 点击“开始监听”。
+1. 打开“设置 → 模型”，选择“大模型 API”。
+2. Endpoint 预设选择 `DeepSeek`，模型自动填 `deepseek-flash`；也可以点击“拉取模型”读取服务端模型列表。
+3. 填写 API Key。
+4. 勾选“我知晓远程 API 会把消息文本发送给该服务商”。
+5. 点击“测试连接”。该操作只请求模型列表，不发送聊天文本，不会产生分析费用。
+6. 点击“保存并连接”。
 
-API Key 由 Windows DPAPI 加密保存到 `secrets.dat`；`settings.json` 不保存明文 Key。
+API Key 由 Windows DPAPI 加密保存到 `secrets.dat`；`settings.json` 不保存明文 Key。保存后输入框会清空，不会回显；留空表示保持原 Key。
 
 ### 3.3 cURL 自测
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 import json
+import os
 import queue
 import secrets
+import subprocess
 import sys
 import threading
 import tkinter as tk
@@ -11,6 +13,8 @@ from pathlib import Path
 from tkinter import ttk, messagebox
 from .classifier import classify_message, message_context
 from .api_classifier import classify_with_api, validate_api_endpoint
+from .api_config import API_PRESETS, API_PRESET_MODELS
+from .api_probe import probe_endpoint
 from .chaoxing_bridge import DEFAULT_PORT as CHAOXING_DEFAULT_PORT, ChaoxingBridge
 from .chaoxing_dialog import ChaoxingAccessDialog
 from .config import HISTORY_API_DEFAULT, LOCAL_API_DEFAULT, data_dir, load_settings, save_settings
@@ -19,6 +23,7 @@ from .napcat_api import NapCatClient
 from .onebot import OneBotListener, validate_local_ws_url
 from .secret_store import (SECRET_API_KEY, SECRET_CHAOXING_TOKEN, SECRET_HTTP_TOKEN,
                            SECRET_WS_TOKEN, clear_all_secrets, load_secret, save_secret)
+from .settings_drawer import SettingsDrawer
 from .store import (init_db, insert_event, list_messages, list_todos, list_contacts,
                     list_competition_items, list_course_assignments, get_course_assignment,
                     review_course_assignment, review_todo, clear_all_data, safe_chaoxing_url)
@@ -26,6 +31,9 @@ from .sync import needs_model_analysis, sync_today
 from .timeparse import format_due_display
 from .dashboard import DashboardFrame
 from .import_dialog import HistoryImportDialog
+from .update_service import UpdateService
+from .updater import UpdateError, apply_pending
+from .version import __version__
 from .theme import (AMBER_SOFT, BG, BLUE, BLUE_HOVER, BLUE_SOFT, BORDER, CARD,
                     DANGER, RADIUS_LG, RED_SOFT, SUCCESS, TEXT, TEXT_2,
                     TEXT_3, WARNING, NavBar, RoundedBar, RoundedButton,
@@ -33,11 +41,6 @@ from .theme import (AMBER_SOFT, BG, BLUE, BLUE_HOVER, BLUE_SOFT, BORDER, CARD,
                     ui_font)
 
 PAGE_BG = BG
-API_PRESETS = {
-    "Ollama": "http://127.0.0.1:11434/v1/chat/completions",
-    "LM Studio": "http://127.0.0.1:1234/v1/chat/completions",
-    "DeepSeek": "https://api.deepseek.com/v1/chat/completions",
-}
 
 def _configure_styles(root):
     configure_styles(root)
@@ -45,7 +48,7 @@ def _configure_styles(root):
 class InboxApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("QQ Local Inbox · 本地事务分拣器")
+        self.root.title(f"QQ Local Inbox · 本地事务分拣器 · v{__version__}")
         self.root.geometry("1240x860")
         self.root.minsize(1024, 680)
         self.root.configure(bg=PAGE_BG)
@@ -76,21 +79,30 @@ class InboxApp:
         self.mode_var = tk.StringVar(value=self.settings.get("analysis_mode", "rules"))
         self.api_endpoint_var = tk.StringVar(value=self.settings.get("api_endpoint", LOCAL_API_DEFAULT))
         self.api_model_var = tk.StringVar(value=self.settings.get("api_model", ""))
-        self.api_key_var = tk.StringVar(value=self.api_key_memory)
+        self.api_key_var = tk.StringVar(value="")
         self.api_preset_var = tk.StringVar(value=self._preset_name(self.api_endpoint_var.get()))
         self.remote_consent_var = tk.BooleanVar(value=bool(self.settings.get("allow_remote_api", False)))
         self.auto_connect_var = tk.BooleanVar(value=bool(self.settings.get("auto_connect", True)))
         self.auto_sync_var = tk.BooleanVar(value=bool(self.settings.get("auto_sync_today", True)))
-        self.settings_visible = True
+        self.auto_check_updates_var = tk.BooleanVar(
+            value=bool(self.settings.get("auto_check_updates", True)))
+        self.auto_download_updates_var = tk.BooleanVar(
+            value=bool(self.settings.get("auto_download_updates", True)))
+        self.auto_apply_updates_var = tk.BooleanVar(
+            value=bool(self.settings.get("auto_apply_updates", True)))
         self._build()
+        self.update_service = UpdateService(__version__, data_dir() / "updates", self.events)
         self.status.trace_add("write", lambda *_args: self._sync_status_visual())
         self._toggle_api_fields()
         self._sync_status_visual()
         self.refresh_all()
         self._set_window_icon()
+        self.root.bind("<Escape>", lambda _event: self.drawer.close())
         self.root.after(250, self._drain_events)
         self.root.after(800, self._auto_connect)
+        self.root.after(3000, self._auto_check_updates)
         self.root.after(120000, self._periodic_refresh)
+        self.root.after(6 * 60 * 60 * 1000, self._periodic_update_check)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     @staticmethod
@@ -109,10 +121,10 @@ class InboxApp:
         self._build_footer()
         self.body = tk.Frame(self.root, bg=BG)
         self.body.pack(fill="both", expand=True)
-        self._build_settings_card()
         self.content_holder = tk.Frame(self.body, bg=BG)
         self.content_holder.pack(fill="both", expand=True, padx=20, pady=(16, 12))
         self._build_pages()
+        self.drawer = SettingsDrawer(self.root, self)
 
     def _build_header(self):
         bar = tk.Frame(self.root, bg=CARD, height=68)
@@ -140,7 +152,7 @@ class InboxApp:
                                       bg=CARD)
         self.conn_pill.pack(side="left", padx=(0, 14))
 
-        self.settings_toggle_btn = RoundedButton(right, text="连接设置", kind="ghost",
+        self.settings_toggle_btn = RoundedButton(right, text="设置", kind="ghost",
                                                  command=self._toggle_settings_panel)
         self.settings_toggle_btn.pack(side="right", padx=(8, 0))
         self.stop_btn = RoundedButton(right, text="停止监听", kind="ghost",
@@ -152,9 +164,6 @@ class InboxApp:
         self.sync_btn = RoundedButton(right, text="同步今天", kind="soft",
                                       command=self.start_today_sync)
         self.sync_btn.pack(side="right", padx=(8, 0))
-        self.import_btn = RoundedButton(right, text="导入历史", kind="ghost",
-                                        command=self.open_import_dialog)
-        self.import_btn.pack(side="right", padx=(8, 0))
         self.stop_btn.pack_forget()
 
     def _build_nav(self):
@@ -168,13 +177,6 @@ class InboxApp:
         inner = tk.Frame(footer, bg=CARD)
         inner.pack(fill="x", padx=20, pady=(8, 9))
 
-        actions = tk.Frame(inner, bg=CARD)
-        actions.pack(side="right", padx=(14, 0))
-        RoundedButton(actions, text="清除已保存凭据", kind="ghost", height=32, padx=14,
-                      command=self.clear_credentials).pack(side="left", padx=(0, 8))
-        RoundedButton(actions, text="清空本地数据…", kind="danger", height=32, padx=14,
-                      command=self.clear_data).pack(side="left")
-
         left = tk.Frame(inner, bg=CARD)
         left.pack(side="left", fill="x", expand=True)
         status_row = tk.Frame(left, bg=CARD)
@@ -183,7 +185,7 @@ class InboxApp:
         self.status_dot.pack(side="left", padx=(0, 6))
         self.status_label = ttk.Label(status_row, textvariable=self.status,
                                       style="CardMuted.TLabel", justify="left",
-                                      wraplength=780)
+                                      wraplength=900)
         self.status_label.pack(side="left", fill="x", expand=True)
 
         privacy_row = tk.Frame(left, bg=CARD)
@@ -195,87 +197,7 @@ class InboxApp:
         privacy_link.pack(side="left", padx=(8, 0))
         privacy_link.bind("<Button-1>", lambda _event: self._show_privacy())
         footer.bind("<Configure>", lambda event: self.status_label.configure(
-            wraplength=max(320, event.width - 460)))
-
-    def _build_settings_card(self):
-        self.settings_card = RoundedFrame(self.body, radius=RADIUS_LG, fill=CARD,
-                                          outline=BORDER, bg=BG)
-        self.settings_card.pack(fill="x")
-        top = tk.Frame(self.settings_card.content, bg=CARD)
-        top.pack(fill="x", padx=18, pady=(14, 16))
-
-        head = tk.Frame(top, bg=CARD)
-        head.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 10))
-        tk.Label(head, text="连接与分析设置", font=ui_font(11, "bold"),
-                 bg=CARD, fg=TEXT).pack(side="left")
-        tk.Label(head, text="Token 与 API Key 加密保存在本机，不需要每次输入",
-                 font=ui_font(8), bg=CARD, fg=TEXT_3).pack(side="left", padx=(10, 0))
-
-        self.ws_label = ttk.Label(top, text="NapCat WebSocket 地址", style="CardMuted.TLabel")
-        self.ws_label.grid(row=1, column=0, sticky="w", pady=4)
-        self.ws_entry = ttk.Entry(top, textvariable=self.url_var, width=34)
-        self.ws_entry.grid(row=1, column=1, sticky="ew", padx=(6, 18), pady=4)
-        self.token_label = ttk.Label(top, text="Access Token（可留空）", style="CardMuted.TLabel")
-        self.token_label.grid(row=1, column=2, sticky="w", pady=4)
-        self.token_entry = ttk.Entry(top, textvariable=self.token_var, show="•", width=24)
-        self.token_entry.grid(row=1, column=3, sticky="ew", padx=(6, 0), pady=4)
-
-        self.options_frame = tk.Frame(top, bg=CARD)
-        self.options_frame.grid(row=2, column=1, columnspan=3, sticky="w", pady=(6, 0))
-        self.group_check = ToggleChip(self.options_frame, "接收群消息", self.group_var)
-        self.group_check.pack(side="left")
-        self.auto_connect_check = ToggleChip(self.options_frame, "启动时自动连接",
-                                             self.auto_connect_var)
-        self.auto_connect_check.pack(side="left", padx=(10, 0))
-        self.auto_sync_check = ToggleChip(self.options_frame, "启动时同步今天消息",
-                                          self.auto_sync_var)
-        self.auto_sync_check.pack(side="left", padx=(10, 0))
-
-        self.mode_label = ttk.Label(top, text="分析方式", style="CardMuted.TLabel")
-        self.mode_label.grid(row=3, column=0, sticky="w", pady=(14, 0))
-        mode_frame = tk.Frame(top, bg=CARD)
-        mode_frame.grid(row=3, column=1, columnspan=3, sticky="w", pady=(14, 0))
-        self.mode_rules_btn = ttk.Radiobutton(mode_frame, text="本地规则", value="rules",
-                                              variable=self.mode_var, command=self._toggle_api_fields)
-        self.mode_rules_btn.pack(side="left")
-        self.mode_api_btn = ttk.Radiobutton(mode_frame, text="大模型 API（本机/远程）", value="api",
-                                            variable=self.mode_var, command=self._toggle_api_fields)
-        self.mode_api_btn.pack(side="left", padx=(16, 0))
-
-        self.api_endpoint_label = ttk.Label(top, text="API Endpoint", style="CardMuted.TLabel")
-        self.api_endpoint_label.grid(row=4, column=0, sticky="w", pady=(6, 0))
-        self.api_endpoint_entry = ttk.Entry(top, textvariable=self.api_endpoint_var)
-        self.api_endpoint_entry.grid(row=4, column=1, columnspan=2, sticky="ew",
-                                     padx=(6, 10), pady=(6, 0))
-        self.api_preset_box = ttk.Combobox(top, textvariable=self.api_preset_var,
-                                           values=tuple(API_PRESETS) + ("自定义",),
-                                           state="readonly", width=12)
-        self.api_preset_box.grid(row=4, column=3, sticky="w", padx=(6, 0), pady=(6, 0))
-        self.api_preset_box.bind("<<ComboboxSelected>>", lambda _event: self._apply_api_preset())
-
-        self.api_model_label = ttk.Label(top, text="API Model（模型名）", style="CardMuted.TLabel")
-        self.api_model_label.grid(row=5, column=0, sticky="w", pady=(6, 0))
-        self.api_model_entry = ttk.Entry(top, textvariable=self.api_model_var, width=28)
-        self.api_model_entry.grid(row=5, column=1, sticky="ew", padx=(6, 18), pady=(6, 0))
-        self.api_key_label = ttk.Label(top, text="API Key（加密保存；远程必填）", style="CardMuted.TLabel")
-        self.api_key_label.grid(row=5, column=2, sticky="w", pady=(6, 0))
-        self.api_key_entry = ttk.Entry(top, textvariable=self.api_key_var, show="•", width=24)
-        self.api_key_entry.grid(row=5, column=3, sticky="ew", padx=(6, 0), pady=(6, 0))
-        self.api_hint_label = ttk.Label(
-            top, style="CardMuted.TLabel",
-            text="本机端点默认允许；远程需 HTTPS + 知情确认。Key/Token 用 Windows DPAPI 加密保存在本机。")
-        self.api_hint_label.grid(row=6, column=1, columnspan=3, sticky="w", pady=(6, 0))
-        self.remote_consent_check = ToggleChip(
-            top, "我知晓远程 API 会把消息文本发送给该服务商",
-            self.remote_consent_var, command=self._toggle_api_fields)
-        self.remote_consent_check.grid(row=7, column=1, columnspan=3, sticky="w", pady=(6, 0))
-        self.api_widgets = (self.api_endpoint_label, self.api_endpoint_entry, self.api_preset_box,
-                            self.api_model_label, self.api_model_entry, self.api_key_label,
-                            self.api_key_entry, self.api_hint_label, self.remote_consent_check)
-        self.connection_widgets = (self.ws_label, self.ws_entry, self.token_label, self.token_entry,
-                                   self.options_frame, self.mode_label, mode_frame) + self.api_widgets
-        top.columnconfigure(1, weight=1)
-        top.columnconfigure(3, weight=1)
+            wraplength=max(320, event.width - 60)))
 
     def _build_pages(self):
         self.dashboard = DashboardFrame(self.content_holder, on_detail=self.show_dashboard_detail,
@@ -460,7 +382,10 @@ class InboxApp:
         return image
 
     def _toggle_settings_panel(self):
-        self._set_connection_settings_visible(not self.settings_visible)
+        self.drawer.toggle()
+
+    def show_privacy(self):
+        self._show_privacy()
 
     def _sync_status_visual(self):
         text = self.status.get()
@@ -477,6 +402,8 @@ class InboxApp:
         self.conn_pill.set_dot_color(color)
         self.conn_var.set(label)
         self.status_dot.configure(fg=color)
+        if hasattr(self, "drawer"):
+            self.drawer.conn_badge.set_dot_color(color)
 
     def _show_privacy(self):
         window = tk.Toplevel(self.root)
@@ -501,6 +428,8 @@ class InboxApp:
             "API Key、NapCat Token 与学习通接入令牌使用 Windows DPAPI 加密保存在本机，可在底部清除；"
             "远程知情确认也会一并取消。\n\n"
             "消息、待办与课程作业只保存在本机 SQLite，不会上传。清空本地数据会永久删除这些记录。\n\n"
+            "更新检查只访问 GitHub Releases，不上传聊天记录、Token 或 API Key；"
+            "更新包会校验 SHA256，并在替换前备份旧版本。\n\n"
             f"本地数据目录：{data_dir()}"
         )
         tk.Label(window, text=detail, justify="left", anchor="nw", wraplength=600,
@@ -533,16 +462,8 @@ class InboxApp:
 
     def _toggle_api_fields(self):
         api_mode = self.mode_var.get() == "api"
-        if api_mode:
-            for widget in self.api_widgets:
-                widget.grid()
-            self.api_endpoint_entry.configure(state="normal")
-            self.api_model_entry.configure(state="normal")
-            self.api_key_entry.configure(state="normal")
-            self.api_preset_box.configure(state="readonly")
-        else:
-            for widget in self.api_widgets:
-                widget.grid_remove()
+        if hasattr(self, "drawer"):
+            self.drawer.refresh_mode()
         if self.listener is None:
             if api_mode:
                 if is_remote_url(self.api_endpoint_var.get()):
@@ -555,73 +476,87 @@ class InboxApp:
             else:
                 self.status.set("本地规则模式：不调用模型，不外发聊天文本。")
 
-    def _set_connection_settings_visible(self, visible: bool):
-        if visible:
-            if not self.settings_card.winfo_manager():
-                self.settings_card.pack(fill="x", before=self.content_holder)
-            self._toggle_api_fields()
-        else:
-            self.settings_card.pack_forget()
-        self.settings_visible = visible
-        self.settings_toggle_btn.configure(
-            text="收起连接设置" if visible else "连接设置")
+    def on_mode_change(self):
+        self._toggle_api_fields()
 
-    def _apply_api_preset(self):
+    def apply_api_preset(self):
         preset = self.api_preset_var.get()
         endpoint = API_PRESETS.get(preset)
         if endpoint:
             self.api_endpoint_var.set(endpoint)
-            if preset == "DeepSeek":
-                self.api_model_var.set("deepseek-flash")
+            models = API_PRESET_MODELS.get(preset, ())
+            if models:
+                self.api_model_var.set(models[0])
         self._toggle_api_fields()
 
     def set_status(self, text):
         self.events.put(("status", text))
 
+    def _persist_settings(self):
+        safe_url = validate_local_ws_url(self.url_var.get())
+        token = self.token_var.get().strip()
+        mode = self.mode_var.get()
+        endpoint = self.api_endpoint_var.get().strip()
+        model = self.api_model_var.get().strip()
+        key_field = self.api_key_var.get().strip()
+        api_key = key_field or self.api_key_memory
+        allow_remote = self.remote_consent_var.get()
+        if mode == "api":
+            if not endpoint:
+                raise ValueError("请填写 API Endpoint。")
+            if is_remote_url(endpoint) and not allow_remote:
+                raise ValueError("远程 API 需要先勾选知情确认；消息文本会发送给该服务商。")
+            endpoint = validate_api_endpoint(endpoint, allow_remote=allow_remote)
+            if is_remote_url(endpoint) and not api_key:
+                raise ValueError("远程 API 必须填写 API Key。")
+            if not model:
+                raise ValueError("大模型 API 模式必须填写模型名称（例如 deepseek-flash 或 qwen3:8b）。")
+        self.api_key_memory = api_key
+        self.token_memory = token
+        save_secret(SECRET_API_KEY, api_key)
+        save_secret(SECRET_WS_TOKEN, token)
+        self.settings.update({
+            "ws_url": safe_url,
+            "include_group_messages": self.group_var.get(),
+            "analysis_mode": mode,
+            "api_endpoint": endpoint,
+            "api_model": model,
+            "history_api_url": self.settings.get("history_api_url", HISTORY_API_DEFAULT),
+            "auto_connect": self.auto_connect_var.get(),
+            "auto_sync_today": self.auto_sync_var.get(),
+            "allow_remote_api": allow_remote,
+            "chaoxing_port": self.settings.get("chaoxing_port", CHAOXING_DEFAULT_PORT),
+            "auto_check_updates": self.auto_check_updates_var.get(),
+            "auto_download_updates": self.auto_download_updates_var.get(),
+            "auto_apply_updates": self.auto_apply_updates_var.get(),
+        })
+        save_settings(self.settings)
+        self.api_endpoint_var.set(self.settings["api_endpoint"])
+        if key_field:
+            self.api_key_var.set("")
+        return safe_url, token
+
+    def save_settings_from_drawer(self):
+        try:
+            self._persist_settings()
+        except Exception as exc:
+            messagebox.showerror("无法保存设置", str(exc), parent=self.root)
+            return
+        self.status.set("设置已保存。")
+
+    def save_and_connect(self):
+        self.start_listener()
+
     def start_listener(self, auto=False):
         try:
-            safe_url = validate_local_ws_url(self.url_var.get())
-            token = self.token_var.get()
-            mode = self.mode_var.get()
-            endpoint = self.api_endpoint_var.get().strip()
-            model = self.api_model_var.get().strip()
-            api_key = self.api_key_var.get().strip()
-            if mode == "api":
-                if not endpoint:
-                    raise ValueError("请填写 API Endpoint。")
-                allow_remote = self.remote_consent_var.get()
-                if is_remote_url(endpoint) and not allow_remote:
-                    raise ValueError("远程 API 需要先勾选知情确认；消息文本会发送给该服务商。")
-                endpoint = validate_api_endpoint(endpoint, allow_remote=allow_remote)
-                if is_remote_url(endpoint) and not api_key:
-                    raise ValueError("远程 API 必须填写 API Key。")
-                if not model:
-                    raise ValueError("大模型 API 模式必须填写模型名称（例如 deepseek-flash 或 qwen3:8b）。")
-            self.api_key_memory = api_key
-            self.token_memory = token.strip()
-            save_secret(SECRET_API_KEY, api_key)
-            save_secret(SECRET_WS_TOKEN, self.token_memory)
-            self.settings = {
-                "ws_url": safe_url,
-                "include_group_messages": self.group_var.get(),
-                "analysis_mode": mode,
-                "api_endpoint": endpoint,
-                "api_model": model,
-                "history_api_url": self.settings.get("history_api_url", HISTORY_API_DEFAULT),
-                "auto_connect": self.auto_connect_var.get(),
-                "auto_sync_today": self.auto_sync_var.get(),
-                "allow_remote_api": self.remote_consent_var.get(),
-                "chaoxing_port": self.settings.get("chaoxing_port", CHAOXING_DEFAULT_PORT),
-            }
-            save_settings(self.settings)
-            self.api_endpoint_var.set(self.settings["api_endpoint"])
+            safe_url, token = self._persist_settings()
             listener = OneBotListener(safe_url, token, self.group_var.get(), self._on_event, self.set_status)
             listener.start()
             self.listener = listener
-            self._set_connection_settings_visible(False)
+            self.drawer.close()
         except Exception as exc:
             if auto:
-                self._set_connection_settings_visible(True)
+                self.drawer.open()
                 self.status.set(f"自动连接未启动：{str(exc)[:160]}")
             else:
                 messagebox.showerror("无法启动监听", str(exc), parent=self.root)
@@ -650,6 +585,64 @@ class InboxApp:
                 self.refresh_all()
         finally:
             self.root.after(120000, self._periodic_refresh)
+
+    def _auto_check_updates(self):
+        if self.closing or not self.auto_check_updates_var.get():
+            return
+        self.update_service.start_check(auto_download=self.auto_download_updates_var.get())
+
+    def _periodic_update_check(self):
+        if self.closing:
+            return
+        try:
+            if self.auto_check_updates_var.get():
+                self.update_service.start_check(auto_download=self.auto_download_updates_var.get())
+        finally:
+            self.root.after(6 * 60 * 60 * 1000, self._periodic_update_check)
+
+    def check_updates_manual(self):
+        if self.update_service.start_check(auto_download=self.auto_download_updates_var.get()):
+            self.drawer.set_update_status("正在检查更新…", TEXT_3)
+
+    def apply_update_now(self):
+        if getattr(sys, "frozen", False):
+            messagebox.showinfo("无法自动更新", "打包版请手动下载新版本。", parent=self.root)
+            return
+        try:
+            result = apply_pending(Path(__file__).resolve().parent.parent,
+                                   data_dir() / "updates", __version__)
+        except UpdateError as exc:
+            messagebox.showerror("更新失败", str(exc), parent=self.root)
+            return
+        if not result.applied:
+            reason = {
+                "git-checkout": "当前是开发目录（含 .git），不会自动覆盖。请手动更新。",
+                "no-pending": "没有已下载的更新。",
+            }.get(result.reason, result.reason or "未知原因")
+            messagebox.showinfo("无法应用更新", reason, parent=self.root)
+            return
+        messagebox.showinfo("更新已应用", "程序将重新启动。", parent=self.root)
+        subprocess.Popen([sys.executable, "-m", "src.main"],
+                         cwd=str(Path(__file__).resolve().parent.parent))
+        self.close()
+
+    def test_api_connection(self, _populate_models=False):
+        endpoint = self.api_endpoint_var.get().strip()
+        key = self.api_key_var.get().strip() or self.api_key_memory
+        allow_remote = self.remote_consent_var.get()
+        self.drawer.set_probe_running()
+        threading.Thread(target=self._probe_api_worker,
+                         args=(endpoint, key, allow_remote), daemon=True).start()
+
+    def _probe_api_worker(self, endpoint, key, allow_remote):
+        result = probe_endpoint(endpoint, key, allow_remote)
+        self.events.put(("api_probe_result", result))
+
+    def clear_api_key(self):
+        self.api_key_memory = ""
+        self.api_key_var.set("")
+        save_secret(SECRET_API_KEY, "")
+        self.drawer.probe_status.configure(text="已清除保存的 API Key。", fg=TEXT_2)
 
     def _set_window_icon(self):
         icon = self._asset_path("icon.ico")
@@ -714,7 +707,7 @@ class InboxApp:
         if self.listener:
             self.listener.stop()
             self.listener = None
-        self._set_connection_settings_visible(True)
+        self.drawer.open()
         self.stop_btn.pack_forget()
         self.stop_btn.configure(state="disabled")
         self.start_btn.configure(state="normal")
@@ -797,6 +790,23 @@ class InboxApp:
                         f"学习通作业已同步：新增 {summary.get('inserted', 0)}，"
                         f"更新 {summary.get('updated', 0)}，跳过 {summary.get('skipped', 0)}。")
                     dirty = True
+                elif item[0] == "update_checking":
+                    self.drawer.set_update_status("正在检查更新…", TEXT_3)
+                elif item[0] == "update_checked":
+                    self.drawer.set_update_checked()
+                elif item[0] == "update_available":
+                    info = item[1]
+                    self.drawer.set_update_info(info, staged=False)
+                    if not self.auto_download_updates_var.get():
+                        self.status.set(f"发现新版本 v{info.version}；自动下载已关闭。")
+                elif item[0] == "update_staged":
+                    info = item[1]
+                    self.drawer.set_update_info(info, staged=True)
+                    self.status.set(f"更新 v{info.version} 已下载，下次启动生效。")
+                elif item[0] == "update_error":
+                    self.drawer.set_update_error(item[1])
+                elif item[0] == "api_probe_result":
+                    self.drawer.set_probe_result(item[1])
         except queue.Empty:
             pass
         if dirty:
