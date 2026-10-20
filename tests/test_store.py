@@ -1,13 +1,12 @@
 import os
-import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
 # Must point at a test-only directory before importing src.store: DB_PATH is
 # resolved at import time, and setUp clears the database.
-_TEST_DATA_DIR = tempfile.mkdtemp(prefix="qqli-test-")
-os.environ["QQLI_DATA_DIR"] = _TEST_DATA_DIR
+import _env
+_TEST_DATA_DIR = os.environ["QQLI_DATA_DIR"]
 
 from src.store import (DB_PATH, init_db, insert_event, list_todos, list_messages, review_todo,
                        list_contacts, clear_all_data, dashboard_counts, list_priority_items,
@@ -110,6 +109,8 @@ class StoreWorkflowTests(unittest.TestCase):
             "competitions_projects": 1,
             "pending_invites": 1,
             "today_messages": 4,
+            "course_pending": 0,
+            "course_today": 0,
         })
 
     def test_priority_items_are_ordered_and_include_pending(self):

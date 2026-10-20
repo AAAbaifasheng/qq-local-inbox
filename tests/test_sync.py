@@ -1,10 +1,7 @@
-import os
-import tempfile
 import unittest
 from datetime import datetime
 
-_TEST_DATA_DIR = tempfile.mkdtemp(prefix="qqli-sync-")
-os.environ["QQLI_DATA_DIR"] = _TEST_DATA_DIR
+import _env
 
 from src.store import init_db, insert_event, list_todos, clear_all_data
 from src.classifier import classify_message

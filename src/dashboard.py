@@ -1,15 +1,24 @@
 from __future__ import annotations
 import tkinter as tk
 from datetime import date
+from pathlib import Path
 from tkinter import ttk
 from .store import dashboard_counts, list_priority_items
 from .timeparse import format_due_display
 from .theme import (AMBER_SOFT, BG, BLUE, BLUE_HOVER, BLUE_SOFT, BORDER, CARD,
-                    DANGER, PINK, PINK_SOFT, RADIUS_LG, RED_SOFT, TEXT, TEXT_2,
-                    TEXT_3, WARNING, RoundedButton, RoundedFrame, RoundedLabel,
-                    ui_font)
+                    DANGER, PINK, PINK_SOFT, RADIUS_LG, RED_SOFT, SUCCESS, TEXT,
+                    TEXT_2, TEXT_3, WARNING, RoundedButton, RoundedFrame,
+                    RoundedLabel, ui_font)
 
 WEEKDAYS = ("一", "二", "三", "四", "五", "六", "日")
+ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
+STAT_ICON_FILES = {
+    "today_todos": "stat_todo.png",
+    "pending_replies": "stat_reply.png",
+    "competitions_projects": "stat_compete.png",
+    "pending_invites": "stat_invite.png",
+    "course_pending": "stat_course.png",
+}
 
 
 class DashboardFrame(tk.Frame):
@@ -21,8 +30,19 @@ class DashboardFrame(tk.Frame):
         self.on_complete = on_complete
         self.selected = None
         self.card_vars = {}
+        self._stat_icons = {
+            key: self._load_image(name) for key, name in STAT_ICON_FILES.items()
+        }
+        self._empty_image = self._load_image("empty_state.png")
         self._build()
         self.refresh()
+
+    @staticmethod
+    def _load_image(name):
+        try:
+            return tk.PhotoImage(file=str(ASSET_DIR / name))
+        except (tk.TclError, OSError):
+            return None
 
     def _build(self):
         header = tk.Frame(self, bg=BG)
@@ -49,36 +69,37 @@ class DashboardFrame(tk.Frame):
         cards = tk.Frame(self, bg=BG)
         cards.pack(fill="x", pady=(0, 16))
         specs = (
-            ("today_todos", "今日待办", "已确认且截止日期为今天",
-             BLUE, BLUE_SOFT, "今"),
-            ("pending_replies", "待回复", "需要你回应的活跃事项",
-             PINK, PINK_SOFT, "回"),
-            ("competitions_projects", "比赛与项目", "进行中的比赛、项目事项",
-             WARNING, AMBER_SOFT, "赛"),
-            ("pending_invites", "待确认邀约", "尚未确认的见面邀约",
-             BLUE_HOVER, "#EDF2FE", "约"),
+            ("today_todos", "今日待办", "已确认且截止日期为今天", BLUE),
+            ("pending_replies", "待回复", "需要你回应的活跃事项", PINK),
+            ("competitions_projects", "比赛与项目", "进行中的比赛、项目事项", WARNING),
+            ("pending_invites", "待确认邀约", "尚未确认的见面邀约", BLUE_HOVER),
+            ("course_pending", "课程作业", "待做/未交的课程作业", SUCCESS),
         )
-        for index, (key, title, hint, accent_color, tint, glyph) in enumerate(specs):
+        for index, (key, title, hint, accent_color) in enumerate(specs):
             cards.columnconfigure(index, weight=1, uniform="stat")
             outer = RoundedFrame(cards, radius=16, fill=CARD, outline=BORDER, bg=BG)
             outer.grid(row=0, column=index, sticky="nsew",
-                       padx=(0, 12) if index < len(specs) - 1 else 0)
+                       padx=(0, 10) if index < len(specs) - 1 else 0)
             body = tk.Frame(outer.content, bg=CARD)
-            body.pack(fill="both", expand=True, padx=15, pady=(13, 11))
-            head = tk.Frame(body, bg=CARD)
-            head.pack(fill="x")
-            tk.Label(head, text=title, font=ui_font(9), bg=CARD,
-                     fg=TEXT_2).pack(side="left")
-            bubble = RoundedFrame(head, radius=9, fill=tint, outline="", bg=CARD)
-            bubble.pack(side="right")
-            tk.Label(bubble.content, text=glyph, font=ui_font(9, "bold"),
-                     bg=tint, fg=accent_color).pack(padx=4, pady=1)
+            body.pack(fill="both", expand=True, padx=12, pady=(12, 10))
+            body.columnconfigure(1, weight=1)
+            icon = self._stat_icons.get(key)
+            if icon is not None:
+                tk.Label(body, image=icon, bg=CARD).grid(
+                    row=0, column=0, rowspan=3, sticky="", padx=(0, 10))
+            else:
+                bubble = RoundedFrame(body, radius=9, fill=BLUE_SOFT, outline="", bg=CARD)
+                bubble.grid(row=0, column=0, rowspan=3, sticky="", padx=(0, 10))
+                tk.Label(bubble.content, text=title[0], font=ui_font(13, "bold"),
+                         bg=BLUE_SOFT, fg=accent_color).pack(padx=6, pady=4)
+            tk.Label(body, text=title, font=ui_font(9), bg=CARD,
+                     fg=TEXT_2).grid(row=0, column=1, sticky="w")
             value = tk.StringVar(value="0")
             self.card_vars[key] = value
-            tk.Label(body, textvariable=value, font=ui_font(24, "bold"),
-                     bg=CARD, fg=TEXT).pack(anchor="w", pady=(4, 0))
+            tk.Label(body, textvariable=value, font=ui_font(22, "bold"),
+                     bg=CARD, fg=TEXT).grid(row=1, column=1, sticky="w", pady=(1, 0))
             tk.Label(body, text=hint, font=ui_font(8), bg=CARD,
-                     fg=TEXT_3).pack(anchor="w")
+                     fg=TEXT_3).grid(row=2, column=1, sticky="w")
             for widget in (outer, body):
                 widget.bind("<Enter>", lambda _event, frame=outer, color=accent_color:
                             frame.set_outline(color))
@@ -143,10 +164,12 @@ class DashboardFrame(tk.Frame):
         self.tree.bind("<Double-1>", lambda _event: self._detail())
 
         self.empty_state = tk.Frame(holder, bg=CARD)
+        if self._empty_image is not None:
+            tk.Label(self.empty_state, image=self._empty_image, bg=CARD).pack()
         tk.Label(self.empty_state, text="今天没有需要处理的事务", font=ui_font(12, "bold"),
-                 bg=CARD, fg=TEXT_2).pack()
+                 bg=CARD, fg=TEXT_2).pack(pady=(0, 0))
         tk.Label(self.empty_state, text="新消息会出现在这里；也可以先同步今天的消息",
-                 font=ui_font(9), bg=CARD, fg=TEXT_3).pack(pady=(6, 0))
+                 font=ui_font(9), bg=CARD, fg=TEXT_3).pack(pady=(5, 0))
 
     def refresh(self):
         counts = dashboard_counts()

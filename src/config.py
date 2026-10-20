@@ -21,6 +21,13 @@ def _endpoint_or_default(value, default: str) -> str:
     except ValueError:
         return default
 
+def _port_or_default(value, default: int = 8765) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return default
+    return port if 1 <= port <= 65535 else default
+
 def data_dir() -> Path:
     override = os.environ.get("QQLI_DATA_DIR")
     if override:
@@ -46,6 +53,7 @@ def load_settings() -> dict:
         "auto_connect": True,
         "auto_sync_today": True,
         "allow_remote_api": False,
+        "chaoxing_port": 8765,
     }
     path = config_path()
     try:
@@ -61,6 +69,7 @@ def load_settings() -> dict:
     defaults["history_api_url"] = _local_or_default(defaults["history_api_url"], HISTORY_API_DEFAULT)
     for key in ("include_group_messages", "auto_connect", "auto_sync_today", "allow_remote_api"):
         defaults[key] = bool(defaults.get(key, False))
+    defaults["chaoxing_port"] = _port_or_default(defaults.get("chaoxing_port", 8765))
     return defaults
 
 def save_settings(settings: dict) -> None:
@@ -75,5 +84,6 @@ def save_settings(settings: dict) -> None:
         "auto_connect": bool(settings.get("auto_connect", True)),
         "auto_sync_today": bool(settings.get("auto_sync_today", True)),
         "allow_remote_api": bool(settings.get("allow_remote_api", False)),
+        "chaoxing_port": _port_or_default(settings.get("chaoxing_port", 8765)),
     }
     config_path().write_text(json.dumps(clean, ensure_ascii=False, indent=2), encoding="utf-8")

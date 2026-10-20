@@ -4,8 +4,9 @@ import json
 import re
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from .config import data_dir
 from .timeparse import resolve_due
 
@@ -60,9 +61,29 @@ def init_db():
           reviewed_at TEXT,
           dedupe_key TEXT
         );
+        CREATE TABLE IF NOT EXISTS course_assignments (
+          assignment_key TEXT PRIMARY KEY,
+          source TEXT NOT NULL,
+          course_id TEXT NOT NULL,
+          course_name TEXT NOT NULL,
+          assignment_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          due_date TEXT,
+          due_time TEXT,
+          due_display TEXT,
+          state TEXT NOT NULL,
+          state_text TEXT NOT NULL DEFAULT '',
+          detail_url TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pending_review',
+          first_seen_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          reviewed_at TEXT
+        );
         CREATE INDEX IF NOT EXISTS idx_messages_received ON messages(received_at DESC);
         CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id, timestamp DESC);
         CREATE INDEX IF NOT EXISTS idx_todos_status_priority ON todos(status, importance DESC);
+        CREATE INDEX IF NOT EXISTS idx_course_status_due
+          ON course_assignments(status, state, due_date);
         """)
         columns = {row["name"] for row in c.execute("PRAGMA table_info(todos)").fetchall()}
         if "due_date" not in columns:
@@ -262,10 +283,18 @@ def dashboard_counts() -> dict:
           COALESCE(SUM(CASE WHEN needs_reply=1 AND status IN ('pending_review','confirmed') THEN 1 ELSE 0 END),0) AS pending_replies,
           COALESCE(SUM(CASE WHEN status IN ('pending_review','confirmed') AND (category LIKE '%比赛/竞赛%' OR category LIKE '%项目/开发%') THEN 1 ELSE 0 END),0) AS competitions_projects,
           COALESCE(SUM(CASE WHEN status='pending_review' AND category LIKE '%邀约/见面%' THEN 1 ELSE 0 END),0) AS pending_invites,
-          (SELECT COUNT(*) FROM messages WHERE substr(timestamp,1,10)=date('now','localtime')) AS today_messages
+          (SELECT COUNT(*) FROM messages WHERE substr(timestamp,1,10)=date('now','localtime')) AS today_messages,
+          (SELECT COUNT(*) FROM course_assignments
+            WHERE status IN ('pending_review','confirmed')
+              AND state IN ('open','unknown','closed')) AS course_pending,
+          (SELECT COUNT(*) FROM course_assignments
+            WHERE status IN ('pending_review','confirmed')
+              AND state IN ('open','unknown','closed')
+              AND due_date=date('now','localtime')) AS course_today
           FROM todos""").fetchone()
         return {key: int(row[key]) for key in
-                ("today_todos", "pending_replies", "competitions_projects", "pending_invites", "today_messages")}
+                ("today_todos", "pending_replies", "competitions_projects", "pending_invites",
+                 "today_messages", "course_pending", "course_today")}
 
 def list_priority_items(limit=12):
     with connect() as c:
@@ -285,10 +314,219 @@ def list_competition_items(limit=500):
           CASE t.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
           t.importance DESC, t.due_date IS NULL, t.due_date, t.created_at DESC LIMIT ?""", (limit,)).fetchall()
 
+COURSE_DECISIONS = {"confirmed", "done", "dismissed"}
+
+def _clean_course_text(value, limit: int) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
+
+def safe_chaoxing_url(value: str) -> str:
+    """Only keep http(s) links that point at chaoxing.com or a subdomain."""
+    url = str(value or "").strip()
+    if not url or len(url) > 1000:
+        return ""
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        return ""
+    if parsed.scheme not in ("http", "https") or not host:
+        return ""
+    if host != "chaoxing.com" and not host.endswith(".chaoxing.com"):
+        return ""
+    return url
+
+def _normalize_course_state(state_text: str) -> str:
+    text = _clean_course_text(state_text, 60)
+    if not text:
+        return "unknown"
+    if any(word in text for word in ("已批阅", "已评分", "已完成")):
+        return "graded"
+    if any(word in text for word in ("已截止", "已过期", "已结束")):
+        return "closed"
+    if any(word in text for word in ("已交", "已提交", "已上传", "待批阅")):
+        return "submitted"
+    if any(word in text for word in ("未交", "未提交", "待做", "待完成", "未开始",
+                                     "进行中", "待提交", "未完成")):
+        return "open"
+    return "unknown"
+
+def _format_course_due(due: date, time_text: str) -> str:
+    today = datetime.now().astimezone().date()
+    year = f"{due.year}年" if due.year != today.year else ""
+    return f"{year}{due.month}月{due.day}日{(' ' + time_text) if time_text else ''}"
+
+def _parse_course_due(value) -> tuple[str | None, str, str]:
+    """Return (YYYY-MM-DD, HH:MM, display). Accepts 学习通-style deadline text."""
+    raw = _clean_course_text(value, 120)
+    if not raw:
+        return None, "", ""
+
+    if re.fullmatch(r"\d{10,13}", raw):
+        try:
+            stamp = int(raw[:10] if len(raw) == 13 else raw)
+            moment = datetime.fromtimestamp(stamp).astimezone()
+        except (OverflowError, OSError, ValueError):
+            return None, "", raw
+        return moment.date().isoformat(), moment.strftime("%H:%M"), _format_course_due(
+            moment.date(), moment.strftime("%H:%M"))
+
+    if re.search(r"\d{1,2}[:：]\d{2}", raw) or "T" in raw:
+        try:
+            moment = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            moment = None
+        if moment is not None:
+            if moment.tzinfo is not None:
+                moment = moment.astimezone()
+            return moment.date().isoformat(), moment.strftime("%H:%M"), _format_course_due(
+                moment.date(), moment.strftime("%H:%M"))
+
+    match = re.search(
+        r"(\d{4})\s*[-/年.]\s*(\d{1,2})\s*[-/月.]\s*(\d{1,2})\s*日?\s*"
+        r"(?:T?\s*(\d{1,2})[:：](\d{2}))?", raw)
+    if match:
+        year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        hour, minute = match.group(4), match.group(5)
+    else:
+        match = re.search(
+            r"(?<!\d)(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?\s*"
+            r"(?:T?\s*(\d{1,2})[:：](\d{2}))?", raw)
+        if not match:
+            return None, "", raw
+        month, day = int(match.group(1)), int(match.group(2))
+        hour, minute = match.group(3), match.group(4)
+        today = datetime.now().astimezone().date()
+        year = today.year
+        try:
+            candidate = date(year, month, day)
+        except ValueError:
+            return None, "", raw
+        if (today - candidate).days > 30:
+            year += 1
+
+    try:
+        due = date(year, month, day)
+    except ValueError:
+        return None, "", raw
+    time_text = ""
+    if hour is not None and minute is not None:
+        h, m = int(hour), int(minute)
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            time_text = f"{h:02d}:{m:02d}"
+    return due.isoformat(), time_text, _format_course_due(due, time_text)
+
+def course_assignment_key(source: str, course_id: str, assignment_id: str) -> str:
+    raw = f"{source}|{course_id}|{assignment_id}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+def _normalize_course_item(item) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    source = _clean_course_text(item.get("source") or "chaoxing", 30).lower() or "chaoxing"
+    if source != "chaoxing":
+        return None
+    course_name = _clean_course_text(
+        item.get("course_name") or item.get("courseName"), 200) or "学习通课程"
+    title = _clean_course_text(item.get("title") or item.get("name"), 300)
+    if not title:
+        return None
+    course_id = _clean_course_text(item.get("course_id") or item.get("courseId"), 100)
+    if not course_id:
+        course_id = hashlib.sha1(course_name.encode("utf-8")).hexdigest()[:16]
+    due_date, due_time, due_display = _parse_course_due(
+        item.get("due_at") or item.get("due") or item.get("deadline") or item.get("due_text"))
+    assignment_id = _clean_course_text(
+        item.get("assignment_id") or item.get("assignmentId") or item.get("id"), 200)
+    if not assignment_id:
+        raw = f"{course_name}|{title}|{due_date or ''}|{due_time}"
+        assignment_id = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:24]
+    state_text = _clean_course_text(
+        item.get("state_text") or item.get("status_text") or item.get("status"), 60)
+    return {
+        "source": source,
+        "course_id": course_id,
+        "course_name": course_name,
+        "assignment_id": assignment_id,
+        "title": title,
+        "due_date": due_date,
+        "due_time": due_time,
+        "due_display": due_display,
+        "state": _normalize_course_state(state_text),
+        "state_text": state_text,
+        "detail_url": safe_chaoxing_url(item.get("url") or item.get("detail_url")),
+    }
+
+def upsert_course_assignments(items) -> dict:
+    """Insert/update assignment metadata; user review decisions stay sticky."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    summary = {"inserted": 0, "updated": 0, "skipped": 0, "total": 0}
+    with connect() as c:
+        for item in items if isinstance(items, list) else []:
+            normalized = _normalize_course_item(item)
+            if normalized is None:
+                summary["skipped"] += 1
+                continue
+            summary["total"] += 1
+            key = course_assignment_key(
+                normalized["source"], normalized["course_id"], normalized["assignment_id"])
+            existing = c.execute(
+                "SELECT status FROM course_assignments WHERE assignment_key=?", (key,)).fetchone()
+            imported_status = "done" if normalized["state"] in {"submitted", "graded"} else "pending_review"
+            if existing is None:
+                c.execute("""INSERT INTO course_assignments
+                  (assignment_key,source,course_id,course_name,assignment_id,title,
+                   due_date,due_time,due_display,state,state_text,detail_url,status,
+                   first_seen_at,updated_at)
+                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                    key, normalized["source"], normalized["course_id"], normalized["course_name"],
+                    normalized["assignment_id"], normalized["title"], normalized["due_date"],
+                    normalized["due_time"], normalized["due_display"], normalized["state"],
+                    normalized["state_text"], normalized["detail_url"], imported_status, now, now))
+                summary["inserted"] += 1
+            else:
+                status = existing["status"]
+                if imported_status == "done" and status in {"pending_review", "confirmed"}:
+                    status = "done"
+                c.execute("""UPDATE course_assignments SET
+                  course_name=?,title=?,due_date=?,due_time=?,due_display=?,state=?,
+                  state_text=?,detail_url=?,status=?,updated_at=?
+                  WHERE assignment_key=?""", (
+                    normalized["course_name"], normalized["title"], normalized["due_date"],
+                    normalized["due_time"], normalized["due_display"], normalized["state"],
+                    normalized["state_text"], normalized["detail_url"], status, now, key))
+                summary["updated"] += 1
+    return summary
+
+def list_course_assignments(limit=500, include_dismissed=False):
+    where = "" if include_dismissed else "WHERE status != 'dismissed'"
+    with connect() as c:
+        return c.execute(f"""SELECT * FROM course_assignments {where}
+          ORDER BY CASE status WHEN 'pending_review' THEN 0 WHEN 'confirmed' THEN 1
+                   WHEN 'done' THEN 2 ELSE 3 END,
+          CASE state WHEN 'open' THEN 0 WHEN 'unknown' THEN 1 WHEN 'submitted' THEN 2
+                     WHEN 'graded' THEN 3 ELSE 4 END,
+          due_date IS NULL, due_date, due_time, updated_at DESC LIMIT ?""", (limit,)).fetchall()
+
+def get_course_assignment(assignment_key: str):
+    with connect() as c:
+        return c.execute("SELECT * FROM course_assignments WHERE assignment_key=?",
+                         (assignment_key,)).fetchone()
+
+def review_course_assignment(assignment_key: str, decision: str) -> bool:
+    if decision not in COURSE_DECISIONS:
+        raise ValueError("invalid decision")
+    with connect() as c:
+        cur = c.execute("""UPDATE course_assignments SET status=?,reviewed_at=?
+          WHERE assignment_key=? AND status IN ('pending_review','confirmed')""",
+                        (decision, datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                         assignment_key))
+        return cur.rowcount > 0
+
 def clear_all_data():
     with connect() as c:
         c.execute("DELETE FROM todos")
         c.execute("DELETE FROM messages")
+        c.execute("DELETE FROM course_assignments")
     # Best-effort cleanup of SQLite freelist/WAL. This is not a forensic-grade
     # wipe and cannot override SSD wear-levelling, snapshots, or external backups.
     c = sqlite3.connect(DB_PATH, timeout=10)

@@ -18,6 +18,7 @@ Do not open a public issue containing API keys, NapCat tokens, chat logs, real s
 Relevant areas include:
 
 - local-only validation for NapCat WebSocket / HTTP endpoints
+- loopback-only Chaoxing bridge, token authentication, CORS origin checks, and request-size limits
 - Windows DPAPI credential storage
 - remote API consent and API key handling
 - message text redaction, local SQLite storage, and data clearing
@@ -31,7 +32,9 @@ Never attach any of the following to an issue, discussion, pull request, or scre
 - `settings.json`
 - `inbox.sqlite3` or its WAL/SHM files
 - real QQ chat logs or screenshots
-- API keys, Access Tokens, cookies, or account credentials
+- real 学习通 assignment pages, course links, or screenshots
+- the generated `chaoxing_bridge.user.js` (it embeds the local bridge token)
+- API keys, Access Tokens, bridge tokens, cookies, or account credentials
 
 If a credential was exposed, rotate it at the provider and remove it from the local machine. Deleting a Git commit is not enough once a repository has been cloned or cached.
 
@@ -42,7 +45,8 @@ If a credential was exposed, rotate it at the provider and remove it from the lo
 - Classification and date inference can be wrong; every candidate requires human confirmation.
 - NapCatQQ and QQ are third-party services. Use is subject to their terms, licenses, and local law.
 - Clearing local data uses SQLite `secure_delete` / WAL checkpoint / `VACUUM`, but cannot guarantee removal from SSD wear-levelling, snapshots, or backups.
+- The Chaoxing assignment reader is a best-effort userscript that parses page structure. 学习通 has no public student API; page changes can break extraction, and automated access may be subject to platform terms.
 
 ## Dependencies
 
-The only runtime dependency is `websocket-client` (Apache-2.0). Python, Tkinter, NapCatQQ, DeepSeek, Ollama, and LM Studio are external components; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The only Python runtime dependency is `websocket-client` (Apache-2.0). Python, Tkinter, NapCatQQ, DeepSeek, Ollama, and LM Studio are external components. The optional Chaoxing bridge requires a third-party userscript manager (Tampermonkey or Violentmonkey); it is not bundled. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

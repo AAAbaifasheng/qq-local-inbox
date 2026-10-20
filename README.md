@@ -13,11 +13,11 @@
 </p>
 
 <p align="center">
-  <strong>把 QQ 里需要你处理的事，整理成一张本地事务面板。</strong><br>
-  作业 / 比赛 / 项目 / 邀约 / 待回复 · 本地 SQLite · 可选本地或远程模型
+  <strong>把 QQ 和学习通里需要你处理的事，整理成一张本地事务面板。</strong><br>
+  作业 / 比赛 / 项目 / 邀约 / 待回复 · 学习通作业（可选） · 本地 SQLite · 可选本地或远程模型
 </p>
 
-> 本项目不是腾讯 QQ 官方产品，也不隶属于 NapCatQQ。QQ 接入通过你自行安装并登录的 NapCatQQ 完成；不提供 QQ 登录、消息发送或自动回复能力。
+> 本项目不是腾讯 QQ 官方产品，也不隶属于 NapCatQQ。QQ 接入通过你自行安装并登录的 NapCatQQ 完成；不提供 QQ 登录、消息发送或自动回复能力。学习通接入是可选的本机只读桥，不隶属于超星学习通；使用前请自行确认平台条款。
 
 ## 界面预览
 
@@ -31,12 +31,13 @@
 
 | 模块 | 说明 |
 | --- | --- |
-| 事务中心 | 今日待办、待回复、比赛与项目、待确认邀约四张卡片，按优先级列出最多 12 条事项 |
+| 事务中心 | 今日待办、待回复、比赛与项目、待确认邀约、课程作业五张卡片，按优先级列出最多 12 条事项 |
 | 比赛/竞赛 | 独立页面集中展示待确认、已确认、已完成的比赛与竞赛事项 |
+| 学习通作业 | 用油猴脚本只读同步作业标题、课程、截止时间与状态；不保存账号密码，不自动提交 |
 | 智能分拣 | 本地规则或 OpenAI 兼容模型；识别作业、比赛、项目、邀约、求助、材料、缴费、出行、就医 |
 | 群聊降噪 | 只有 @你、群公告/管理员要求、明确截止通知、比赛信息才进入候选；闲聊和广告只本地归档 |
-| 重复合并 | 同一会话、同一文本、同一截止日的活跃待办自动合并 |
-| 凭据与隐私 | API Key / NapCat Token 用 Windows DPAPI 加密；远程 API 必须显式确认 |
+| 重复合并 | 同一会话、同一文本、同一截止日的活跃待办自动合并；学习通作业按课程+作业 ID 去重 |
+| 凭据与隐私 | API Key / NapCat Token / 学习通接入令牌用 Windows DPAPI 加密；远程 API 必须显式确认 |
 | 自动同步 | 启动自动连接 NapCat，并同步最近 50 个会话中今天有活动的内容 |
 | 历史导入 | 通过本机 NapCat HTTP 接口手动导入指定好友/群的最近 N 条文本 |
 
@@ -47,13 +48,14 @@ flowchart LR
     QQ["QQ 客户端"] --> NapCat["NapCatQQ\n本机协议端"]
     NapCat -->|"WS 127.0.0.1:3001"| App["QQ Local Inbox"]
     NapCat -->|"HTTP 127.0.0.1:3000"| App
-    App --> DB[("SQLite\n本地消息与待办")]
+    Chaoxing["学习通网页\n已登录浏览器"] -.->|"油猴脚本 → 127.0.0.1:8765"| App
+    App --> DB[("SQLite\n本地消息、待办与课程作业")]
     App -.->|"可选"| Local["Ollama / LM Studio\n本机模型"]
     App -.->|"可选，需确认"| Remote["DeepSeek\n远程 HTTPS"]
 
     classDef local fill:#E6F7FD,stroke:#00AEEC,color:#18191C;
     classDef remote fill:#FFF0F5,stroke:#FB7299,color:#18191C;
-    class QQ,NapCat,App,DB,Local local;
+    class QQ,NapCat,Chaoxing,App,DB,Local local;
     class Remote remote;
 ```
 
@@ -66,6 +68,7 @@ flowchart LR
 | [使用教程与注意事项](docs/USER_GUIDE.md) | 安装、NapCat、首次配置、日常操作、分拣规则、数据清理、常见问题 |
 | [API 接入、费用与本地模型](docs/API_AND_MODELS.md) | DeepSeek/Ollama/LM Studio 接入、Token 估算、峰谷价格、本地模型推荐 |
 | [NapCat 本机连接配置](docs/NAPCAT_SETUP.md) | WebSocket/HTTP 配置、Token、故障排除 |
+| [学习通作业接入](docs/CHAOXING_SETUP.md) | 油猴脚本安装、回环接收服务、数据边界、常见问题 |
 | [隐私与安全检查清单](PRIVACY.md) | 本地存储、凭据、远程外发、数据清除 |
 | [安全策略](SECURITY.md) | 漏洞报告方式、范围、数据安全与已知限制 |
 | [第三方组件与引用说明](THIRD_PARTY_NOTICES.md) | NapCatQQ、OneBot 11、websocket-client、DeepSeek、Ollama、LM Studio 与免责声明 |
@@ -84,13 +87,15 @@ flowchart LR
 - 历史记录只在点击“导入历史”后，从本机 NapCat HTTP 接口读取你指定会话的最近 N 条文本；不会自动拉取，也不会读取其他会话。
 - 默认只接收私聊；群消息默认关闭。打开“接收群消息”后，实时群聊与今日同步使用同一范围：普通群聊只本地规则归档，只有候选/待回复文本才交给模型。
 - 不发送 QQ 消息、不自动回复、不自动接受邀约。
+- 学习通接入只读取作业元数据（课程、标题、截止时间、平台状态、链接），不保存账号密码或 Cookie，不下载附件，不自动提交；作业链接可能带课程定位参数，但只写入本机 SQLite。
+- 学习通接收服务只监听 `127.0.0.1`，每次请求必须携带随机令牌；令牌用 DPAPI 加密保存在 `secrets.dat`，脚本本身包含该令牌，请勿分享。
 - 本地数据默认位于 `%LOCALAPPDATA%\QQLocalInbox\`，包括 `inbox.sqlite3`、不含 Token/Key 的 `settings.json`，以及经 DPAPI 加密的 `secrets.dat`。
 
 > QQ 本身以及 NapCat 的通信进程仍需要联网连接 QQ 服务。我们能约束的是此程序如何处理聊天消息，而不是保证整个 QQ 环境零网络流量。部署前应阅读 NapCat 当前版本的官方说明与隐私/安全行为。本机模型服务（Ollama/LM Studio）与远程服务（如 DeepSeek）是否记录请求、如何使用数据，由对应服务的配置与隐私政策决定。
 
 ## 第三方与免责声明
 
-本项目不是腾讯 QQ 官方产品，也不隶属于 NapCatQQ、DeepSeek、Ollama 或 LM Studio。QQ 接入通过你自行安装并登录的 NapCatQQ 完成；本项目不提供 QQ 登录、消息发送或自动回复能力。QQ 接入需遵守腾讯 QQ 用户协议、NapCat 上游许可和当地法律，第三方协议端可能存在账号风险。
+本项目不是腾讯 QQ 官方产品，也不隶属于 NapCatQQ、DeepSeek、Ollama、LM Studio、超星学习通或 Tampermonkey。QQ 接入通过你自行安装并登录的 NapCatQQ 完成；本项目不提供 QQ 登录、消息发送或自动回复能力。学习通接入依赖你在浏览器中的登录态和第三方脚本管理器，学习通没有面向学生的公开官方 API；使用前请自行确认平台条款。QQ 接入需遵守腾讯 QQ 用户协议、NapCat 上游许可和当地法律，第三方协议端可能存在账号风险。
 
 依赖、许可证与引用说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
@@ -109,6 +114,7 @@ flowchart LR
    - 先用“本地规则”跑通，不调用模型；
    - 需要语义分析时，切换到“大模型 API”，选择本机 Ollama/LM Studio 或显式确认后的 DeepSeek；
    - 点击“开始监听”。
+5. 可选：按 [学习通作业接入](docs/CHAOXING_SETUP.md) 安装油猴脚本，把学习通作业同步到“课程作业”页。
 
 | 分析方式 | 适用场景 | 是否外发 |
 | --- | --- | --- |
@@ -142,6 +148,7 @@ flowchart LR
 4. 在“事务中心”或“待审核事务”查看原消息，点击“确认加入待办”或“忽略此候选”。已确认项目可标记完成。“比赛/竞赛”页集中罗列所有比赛、竞赛事项（待确认/已确认/已完成），可直接查看详情、确认、忽略或标记完成。
 5. 如需处理更早的聊天记录，点击“导入历史”，填写本机 NapCat HTTP 地址（默认 `http://127.0.0.1:3000`）、HTTP Access Token，选择好友/群与条数后导入。导入使用当前分析模式，导入的候选仍需人工确认；远程模式下对话框会提示每条导入文本会发送给服务商。
 6. 点击“同步今天”可手动重跑今日同步。停止监听时点击“停止监听”或直接关闭窗口。需要修改连接设置时，先停止监听，或点击“连接设置”展开面板。
+7. 可选：在“课程作业”页点击“接入说明”，按 [学习通作业接入](docs/CHAOXING_SETUP.md) 安装油猴脚本。同步到的作业默认是“待确认”；选中后可打开作业页、确认加入待办、忽略或标记完成。
 
 ### 使用 DeepSeek（远程 API）
 
@@ -187,13 +194,13 @@ DeepSeek 当前官方模型为 `deepseek-flash` 与 `deepseek-v4-pro`；应用�
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-无需 QQ 登录即可运行规则、本机地址保护、远程端点知情确认、DPAPI 凭据加密、日期推算、NapCat 客户端（模拟 HTTP）、今日同步、SQLite 流程与仪表盘统计测试。测试使用临时数据目录，不会触碰真实的 `%LOCALAPPDATA%\QQLocalInbox\`。
+无需 QQ 登录即可运行规则、本机地址保护、远程端点知情确认、DPAPI 凭据加密、日期推算、NapCat 客户端（模拟 HTTP）、今日同步、SQLite 流程、学习通作业去重与截止时间解析、回环接收服务鉴权/CORS/请求大小限制，以及仪表盘统计测试。测试使用临时数据目录，不会触碰真实的 `%LOCALAPPDATA%\QQLocalInbox\`。
 
 ## 打包成 EXE（可选）
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install pyinstaller
-.\.venv\Scripts\pyinstaller.exe --noconfirm --clean --windowed --name QQLocalInbox --collect-all websocket --hidden-import=tkinter --hidden-import=tkinter.ttk launcher.py
+.\.venv\Scripts\pyinstaller.exe --noconfirm --clean --windowed --name QQLocalInbox --add-data "assets;assets" --collect-all websocket --hidden-import=tkinter --hidden-import=tkinter.ttk launcher.py
 ```
 
 生成文件在 `dist\QQLocalInbox\` 或 PyInstaller 当前版本对应目录。第一次建议使用 onedir 目录包，方便排查依赖。打包产物不包含你的 QQ Token 或消息数据库。

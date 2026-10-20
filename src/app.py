@@ -1,21 +1,27 @@
 from __future__ import annotations
 import json
 import queue
+import secrets
+import sys
 import threading
 import tkinter as tk
-from datetime import date
+import webbrowser
+from datetime import date, datetime
 from pathlib import Path
 from tkinter import ttk, messagebox
 from .classifier import classify_message, message_context
 from .api_classifier import classify_with_api, validate_api_endpoint
+from .chaoxing_bridge import DEFAULT_PORT as CHAOXING_DEFAULT_PORT, ChaoxingBridge
+from .chaoxing_dialog import ChaoxingAccessDialog
 from .config import HISTORY_API_DEFAULT, LOCAL_API_DEFAULT, data_dir, load_settings, save_settings
 from .localnet import is_remote_url
 from .napcat_api import NapCatClient
 from .onebot import OneBotListener, validate_local_ws_url
-from .secret_store import (SECRET_API_KEY, SECRET_HTTP_TOKEN, SECRET_WS_TOKEN,
-                           clear_all_secrets, load_secret, save_secret)
+from .secret_store import (SECRET_API_KEY, SECRET_CHAOXING_TOKEN, SECRET_HTTP_TOKEN,
+                           SECRET_WS_TOKEN, clear_all_secrets, load_secret, save_secret)
 from .store import (init_db, insert_event, list_messages, list_todos, list_contacts,
-                    list_competition_items, review_todo, clear_all_data)
+                    list_competition_items, list_course_assignments, get_course_assignment,
+                    review_course_assignment, review_todo, clear_all_data, safe_chaoxing_url)
 from .sync import needs_model_analysis, sync_today
 from .timeparse import format_due_display
 from .dashboard import DashboardFrame
@@ -47,6 +53,7 @@ class InboxApp:
         self.settings = load_settings()
         self.listener = None
         self.import_window = None
+        self.chaoxing_window = None
         self.api_key_memory = load_secret(SECRET_API_KEY)
         self.token_memory = load_secret(SECRET_WS_TOKEN)
         self.http_token_memory = load_secret(SECRET_HTTP_TOKEN)
@@ -54,6 +61,14 @@ class InboxApp:
         self.auto_sync_attempted = False
         self.closing = False
         self.events = queue.Queue()
+        self.bridge_token = load_secret(SECRET_CHAOXING_TOKEN) or self._new_bridge_token()
+        self.bridge = ChaoxingBridge(
+            self.bridge_token, self._on_chaoxing_import,
+            preferred_port=int(self.settings.get("chaoxing_port", CHAOXING_DEFAULT_PORT)))
+        self.bridge.start()
+        if self.bridge.running and self.settings.get("chaoxing_port") != self.bridge.port:
+            self.settings["chaoxing_port"] = self.bridge.port
+            save_settings(self.settings)
         self.status = tk.StringVar(value="未连接 · 本地规则分类 · 不调用模型")
         self.url_var = tk.StringVar(value=self.settings.get("ws_url", "ws://127.0.0.1:3001"))
         self.token_var = tk.StringVar(value=self.token_memory)
@@ -302,6 +317,45 @@ class InboxApp:
         self.competition_selected = None
         self.nav.add_page("competition", "比赛/竞赛", self.competition_tab)
 
+        self.course_tab, course_card = self._make_page(
+            "课程作业", "从学习通网页只读同步；确认后才进入待办")
+        course_body = self._card_body(course_card)
+        course_buttons = tk.Frame(course_body, bg=CARD)
+        course_buttons.pack(fill="x", pady=(0, 12))
+        self.course_access_btn = RoundedButton(
+            course_buttons, text="接入说明", kind="ghost",
+            command=self.open_chaoxing_dialog)
+        self.course_open_btn = RoundedButton(
+            course_buttons, text="打开作业页", kind="ghost",
+            command=self.course_open, state="disabled")
+        self.course_detail_btn = RoundedButton(
+            course_buttons, text="查看详情", kind="ghost",
+            command=self.course_detail, state="disabled")
+        self.course_confirm_btn = RoundedButton(
+            course_buttons, text="确认加入待办", kind="primary",
+            command=self.course_confirm, state="disabled")
+        self.course_dismiss_btn = RoundedButton(
+            course_buttons, text="忽略", kind="danger",
+            command=self.course_dismiss, state="disabled")
+        self.course_complete_btn = RoundedButton(
+            course_buttons, text="标记完成", kind="primary",
+            command=self.course_complete, state="disabled")
+        for button in (self.course_access_btn, self.course_open_btn,
+                       self.course_detail_btn, self.course_confirm_btn,
+                       self.course_dismiss_btn, self.course_complete_btn):
+            button.pack(side="left", padx=(0, 8))
+        self._create_tree(course_body, "course",
+                          ("course", "title", "due", "platform", "todo", "updated"),
+                          ("课程", "作业", "截止", "平台状态", "待办状态", "最近同步"),
+                          (180, 330, 190, 100, 90, 150),
+                          empty_text="暂无课程作业；点“接入说明”连接学习通")
+        self.course_tree.tag_configure("pending", background=AMBER_SOFT)
+        self.course_tree.tag_configure("overdue", background=RED_SOFT)
+        self.course_tree.bind("<Double-1>", lambda _event: self.course_detail())
+        self.course_tree.bind("<<TreeviewSelect>>", self._course_on_select)
+        self.course_selected = None
+        self.nav.add_page("course", "课程作业", self.course_tab)
+
         self.msg_tab, msg_card = self._make_page("最近消息", "本地保存的最近 500 条文本，按接收时间倒序")
         self._create_tree(self._card_body(msg_card), "messages",
                           ("time", "contact", "kind", "priority", "text"),
@@ -382,8 +436,20 @@ class InboxApp:
         body.pack(fill="both", expand=True, padx=18, pady=14)
         return body
 
+    @staticmethod
+    def _asset_path(name: str) -> Path:
+        path = Path(__file__).resolve().parent.parent / "assets" / name
+        if path.exists():
+            return path
+        bundled = getattr(sys, "_MEIPASS", None)
+        if bundled:
+            candidate = Path(bundled) / "assets" / name
+            if candidate.exists():
+                return candidate
+        return path
+
     def _load_logo(self):
-        path = Path(__file__).resolve().parent.parent / "assets" / "icon.png"
+        path = self._asset_path("icon.png")
         try:
             image = tk.PhotoImage(file=str(path))
         except (tk.TclError, OSError):
@@ -429,10 +495,12 @@ class InboxApp:
                  bg=CARD, fg=TEXT_3).pack(anchor="w", pady=(4, 0))
         detail = (
             "QQ 接入仅限本机 WebSocket；历史导入只访问本机 NapCat HTTP；默认只调用本机模型。\n\n"
+            "学习通接入为可选的只读油猴桥：只读取课程名、作业标题、截止时间、平台状态和链接，"
+            "通过 127.0.0.1 回环服务写入本机；不保存学习通账号密码或 Cookie，不自动提交。\n\n"
             "勾选远程 API 并确认后，消息文本会发送给所配置服务商；不勾选则不会外发。\n\n"
-            "API Key 与 NapCat Token 使用 Windows DPAPI 加密保存在本机，可在底部清除；"
+            "API Key、NapCat Token 与学习通接入令牌使用 Windows DPAPI 加密保存在本机，可在底部清除；"
             "远程知情确认也会一并取消。\n\n"
-            "消息与待办只保存在本机 SQLite，不会上传。清空本地数据会永久删除这些记录。\n\n"
+            "消息、待办与课程作业只保存在本机 SQLite，不会上传。清空本地数据会永久删除这些记录。\n\n"
             f"本地数据目录：{data_dir()}"
         )
         tk.Label(window, text=detail, justify="left", anchor="nw", wraplength=600,
@@ -543,6 +611,7 @@ class InboxApp:
                 "auto_connect": self.auto_connect_var.get(),
                 "auto_sync_today": self.auto_sync_var.get(),
                 "allow_remote_api": self.remote_consent_var.get(),
+                "chaoxing_port": self.settings.get("chaoxing_port", CHAOXING_DEFAULT_PORT),
             }
             save_settings(self.settings)
             self.api_endpoint_var.set(self.settings["api_endpoint"])
@@ -583,7 +652,7 @@ class InboxApp:
             self.root.after(120000, self._periodic_refresh)
 
     def _set_window_icon(self):
-        icon = Path(__file__).resolve().parent.parent / "assets" / "icon.ico"
+        icon = self._asset_path("icon.ico")
         if icon.exists():
             try:
                 self.root.iconbitmap(default=str(icon))
@@ -722,6 +791,12 @@ class InboxApp:
                     self.sync_btn.configure(state="normal")
                     self.status.set(item[1])
                     dirty = True
+                elif item[0] == "chaoxing_import":
+                    summary = item[1]
+                    self.status.set(
+                        f"学习通作业已同步：新增 {summary.get('inserted', 0)}，"
+                        f"更新 {summary.get('updated', 0)}，跳过 {summary.get('skipped', 0)}。")
+                    dirty = True
         except queue.Empty:
             pass
         if dirty:
@@ -746,7 +821,8 @@ class InboxApp:
 
     def refresh_all(self):
         self.dashboard.refresh()
-        for tree_name in ("contacts_tree", "messages_tree", "review_tree", "todos_tree", "competition_tree"):
+        for tree_name in ("contacts_tree", "messages_tree", "review_tree", "todos_tree",
+                          "competition_tree", "course_tree"):
             tree = getattr(self, tree_name)
             for row_id in tree.get_children():
                 tree.delete(row_id)
@@ -787,7 +863,26 @@ class InboxApp:
             self.competition_tree.insert("", "end", iid=f"{status}:{row['id']}", tags=tuple(tags), values=(
                 row["id"], row["priority"], status_text, row["chat_label"], row["category"],
                 due_text, row["title"][:300]))
-        for name in ("messages", "review", "todos", "contacts", "competition"):
+        for row in list_course_assignments(500):
+            status = row["status"]
+            tags = []
+            if status == "pending_review":
+                tags.append("pending")
+            due_text = format_due_display(row["due_date"], row["due_display"])
+            if (row["due_date"] and row["due_date"] < today
+                    and row["state"] in {"open", "unknown"}
+                    and status in {"pending_review", "confirmed"}):
+                due_text = "逾期 · " + due_text
+                tags.append("overdue")
+            platform = row["state_text"] or {
+                "open": "待交", "submitted": "已交", "graded": "已批阅",
+                "closed": "已截止", "unknown": "—"}.get(row["state"], "—")
+            todo_text = {"pending_review": "待确认", "confirmed": "已确认",
+                         "done": "已完成", "dismissed": "已忽略"}.get(status, status)
+            updated = self._local_iso_text(row["updated_at"])
+            self.course_tree.insert("", "end", iid=row["assignment_key"], tags=tuple(tags), values=(
+                row["course_name"], row["title"][:300], due_text, platform, todo_text, updated))
+        for name in ("messages", "review", "todos", "contacts", "competition", "course"):
             tree = getattr(self, f"{name}_tree")
             empty = getattr(self, f"{name}_empty")
             if tree.get_children():
@@ -795,9 +890,12 @@ class InboxApp:
             else:
                 empty.place(relx=0.5, rely=0.5, anchor="center")
         self.competition_selected = None
+        self.course_selected = None
         self._update_competition_buttons()
+        self._update_course_buttons()
         self._update_page_buttons()
         self.nav.set_text("competition", f"比赛/竞赛 {len(self.competition_tree.get_children())}")
+        self.nav.set_text("course", f"课程作业 {len(self.course_tree.get_children())}")
 
     def _selected_row(self, tree_name):
         tree = getattr(self, f"{tree_name}_tree")
@@ -992,6 +1090,131 @@ class InboxApp:
             if review_todo(self.competition_selected[1], "done"):
                 self.refresh_all()
 
+    def _course_on_select(self, _event=None):
+        selection = self.course_tree.selection()
+        self.course_selected = selection[0] if selection else None
+        self._update_course_buttons()
+
+    def _course_row(self):
+        if not self.course_selected:
+            return None
+        return get_course_assignment(self.course_selected)
+
+    def _update_course_buttons(self):
+        row = self._course_row()
+        if row is None:
+            for button in (self.course_open_btn, self.course_detail_btn,
+                           self.course_confirm_btn, self.course_dismiss_btn,
+                           self.course_complete_btn):
+                button.configure(state="disabled")
+            return
+        self.course_open_btn.configure(state="normal" if row["detail_url"] else "disabled")
+        self.course_detail_btn.configure(state="normal")
+        pending = row["status"] == "pending_review"
+        confirmed = row["status"] == "confirmed"
+        self.course_confirm_btn.configure(state="normal" if pending else "disabled")
+        self.course_dismiss_btn.configure(state="normal" if pending else "disabled")
+        self.course_complete_btn.configure(state="normal" if confirmed else "disabled")
+
+    @staticmethod
+    def _local_iso_text(value: str) -> str:
+        try:
+            return datetime.fromisoformat(value).astimezone().strftime("%m-%d %H:%M")
+        except (TypeError, ValueError):
+            return (value or "").replace("T", " ")[:16]
+
+    def _course_state_label(self, row):
+        return row["state_text"] or {
+            "open": "待交", "submitted": "已交", "graded": "已批阅",
+            "closed": "已截止", "unknown": "—"}.get(row["state"], "—")
+
+    def course_detail(self):
+        row = self._course_row()
+        if row is None:
+            return
+        due_display = format_due_display(row["due_date"], row["due_display"])
+        todo_text = {"pending_review": "待确认", "confirmed": "已确认",
+                     "done": "已完成", "dismissed": "已忽略"}.get(row["status"], row["status"])
+        meta = (f"课程：{row['course_name']}\n作业：{row['title']}\n"
+                f"截止：{due_display}\n平台状态：{self._course_state_label(row)}\n"
+                f"待办状态：{todo_text}\n首次同步：{self._local_iso_text(row['first_seen_at'])}\n"
+                f"最近同步：{self._local_iso_text(row['updated_at'])}\n"
+                f"作业链接：{row['detail_url'] or '平台未提供'}")
+        self._show_detail_window(meta, row["title"])
+
+    def course_open(self):
+        row = self._course_row()
+        url = safe_chaoxing_url(row["detail_url"]) if row is not None else ""
+        if not url:
+            messagebox.showinfo("没有链接", "这条作业没有可打开的学习通链接。", parent=self.root)
+            return
+        webbrowser.open(url)
+
+    def course_confirm(self):
+        if self.course_selected:
+            if review_course_assignment(self.course_selected, "confirmed"):
+                self.refresh_all()
+
+    def course_dismiss(self):
+        if self.course_selected:
+            if messagebox.askyesno("忽略作业", "确认忽略这条课程作业？它会从列表中隐藏，原始记录仍保留在本地。",
+                                   parent=self.root):
+                if review_course_assignment(self.course_selected, "dismissed"):
+                    self.refresh_all()
+
+    def course_complete(self):
+        if self.course_selected:
+            if review_course_assignment(self.course_selected, "done"):
+                self.refresh_all()
+
+    def _chaoxing_script_text(self) -> str:
+        path = self._asset_path("chaoxing_bridge.user.js")
+        template = path.read_text(encoding="utf-8")
+        if "__PORT__" not in template or "__TOKEN__" not in template:
+            raise ValueError("学习通脚本模板缺少占位符")
+        return (template.replace("__PORT__", str(self.bridge.port))
+                .replace("__TOKEN__", self.bridge_token))
+
+    def open_chaoxing_dialog(self):
+        if self.chaoxing_window is not None:
+            try:
+                if self.chaoxing_window.winfo_exists():
+                    self.chaoxing_window.lift()
+                    self.chaoxing_window.focus_force()
+                    return
+            except tk.TclError:
+                pass
+        try:
+            script = self._chaoxing_script_text()
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("无法打开接入说明", f"读取脚本模板失败：{exc}", parent=self.root)
+            return
+        self.chaoxing_window = ChaoxingAccessDialog(
+            self.root, script, self.bridge.port, self.bridge.running,
+            self.bridge.error, on_reset_token=self._rotate_bridge_token)
+
+    def _on_chaoxing_import(self, summary: dict):
+        self.events.put(("chaoxing_import", summary))
+
+    @staticmethod
+    def _new_bridge_token() -> str:
+        token = secrets.token_urlsafe(32)
+        save_secret(SECRET_CHAOXING_TOKEN, token)
+        return token
+
+    def _rotate_bridge_token(self):
+        if self.bridge is not None:
+            self.bridge.stop()
+        self.bridge_token = self._new_bridge_token()
+        self.bridge = ChaoxingBridge(
+            self.bridge_token, self._on_chaoxing_import,
+            preferred_port=int(self.settings.get("chaoxing_port", CHAOXING_DEFAULT_PORT)))
+        started = self.bridge.start()
+        if started and self.settings.get("chaoxing_port") != self.bridge.port:
+            self.settings["chaoxing_port"] = self.bridge.port
+            save_settings(self.settings)
+        return self._chaoxing_script_text(), self.bridge.port, started, self.bridge.error
+
     def open_import_dialog(self):
         if self.import_window is not None:
             try:
@@ -1026,8 +1249,9 @@ class InboxApp:
     def clear_credentials(self):
         if messagebox.askyesno(
                 "清除已保存凭据",
-                "这会删除 Windows DPAPI 加密保存的 API Key 与 NapCat Token，并取消远程知情确认。"
-                "不会删除消息和待办。确认继续？", parent=self.root):
+                "这会删除 Windows DPAPI 加密保存的 API Key、NapCat Token 与学习通接入令牌，"
+                "并取消远程知情确认；学习通脚本需要重新复制。不会删除消息和待办。确认继续？",
+                parent=self.root):
             clear_all_secrets()
             self.api_key_memory = ""
             self.token_memory = ""
@@ -1037,22 +1261,41 @@ class InboxApp:
             self.remote_consent_var.set(False)
             self.settings["allow_remote_api"] = False
             save_settings(self.settings)
-            self.status.set("已清除加密保存的凭据，并取消远程知情确认")
+            if self.chaoxing_window is not None:
+                try:
+                    self.chaoxing_window._close()
+                except tk.TclError:
+                    pass
+                self.chaoxing_window = None
+            try:
+                self._rotate_bridge_token()
+            except (OSError, ValueError):
+                pass
+            self.status.set("已清除加密保存的凭据，并重置学习通接入令牌；请在接入说明中重新复制脚本")
 
     def clear_data(self):
-        if messagebox.askyesno("清空本地数据", "这会永久删除本地保存的消息与所有待办，且无法撤销。确认继续？",
+        if messagebox.askyesno("清空本地数据",
+                               "这会永久删除本地保存的消息、待办与课程作业，且无法撤销。确认继续？",
                                icon="warning", parent=self.root):
             clear_all_data()
             self.refresh_all()
 
     def close(self):
         self.closing = True
+        if self.bridge is not None:
+            self.bridge.stop()
         if self.listener:
             self.listener.stop()
         if self.import_window is not None:
             try:
                 self.import_window.closed = True
                 self.import_window.destroy()
+            except tk.TclError:
+                pass
+        if self.chaoxing_window is not None:
+            try:
+                self.chaoxing_window.closed = True
+                self.chaoxing_window.destroy()
             except tk.TclError:
                 pass
         self.api_key_memory = ""
