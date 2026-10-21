@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-21A96B?style=flat-square" alt="MIT"></a>
   <a href="PRIVACY.md"><img src="https://img.shields.io/badge/privacy-local--first-00AEEC?style=flat-square" alt="Local first"></a>
   <a href="docs/NAPCAT_SETUP.md"><img src="https://img.shields.io/badge/NapCat-OneBot%2011-FB7299?style=flat-square" alt="NapCat OneBot 11"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.0-6C5CE7?style=flat-square" alt="Version 0.4.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.1-6C5CE7?style=flat-square" alt="Version 0.4.1"></a>
 </p>
 
 <p align="center">
@@ -38,7 +38,7 @@
 
 | 模块 | 说明 |
 | --- | --- |
-| 事务中心 | 今日待办、待回复、比赛与项目、待确认邀约、课程作业五张卡片，按优先级列出最多 12 条事项 |
+| 事务中心 | 今日待办、待回复、比赛与项目、待确认邀约、课程作业五张卡片，按优先级列出最多 12 条事项；选中后有醒目选择条，可查看完整原始消息并在详情内直接确认/忽略/完成 |
 | 比赛/竞赛 | 独立页面集中展示待确认、已确认、已完成的比赛与竞赛事项 |
 | 学习通作业 | 用油猴脚本只读同步作业标题、课程、截止时间与状态；不保存账号密码，不自动提交 |
 | 智能分拣 | 本地规则或 OpenAI 兼容模型；识别作业、比赛、项目、邀约、求助、材料、缴费、出行、就医 |

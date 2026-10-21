@@ -24,6 +24,8 @@ WARNING = "#FF8A00"
 DANGER = "#F56C6C"
 AMBER_SOFT = "#FFF8EC"
 RED_SOFT = "#FFF2F1"
+SELECT_BG = "#CFEAFF"
+SELECT_FG = "#0B5FA5"
 FONT = "Microsoft YaHei UI"
 RADIUS_SM = 10
 RADIUS = 14
@@ -178,8 +180,8 @@ def configure_styles(root):
     )
     style.map(
         "Treeview",
-        background=[("selected", BLUE_SOFT)],
-        foreground=[("selected", TEXT)],
+        background=[("selected", SELECT_BG)],
+        foreground=[("selected", SELECT_FG)],
     )
     style.configure(
         "Treeview.Heading", background=CARD_ALT, foreground=TEXT_2, font=ui_font(9, "bold"),

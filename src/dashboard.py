@@ -6,9 +6,9 @@ from tkinter import ttk
 from .store import dashboard_counts, list_priority_items
 from .timeparse import format_due_display
 from .theme import (AMBER_SOFT, BG, BLUE, BLUE_HOVER, BLUE_SOFT, BORDER, CARD,
-                    DANGER, PINK, PINK_SOFT, RADIUS_LG, RED_SOFT, SUCCESS, TEXT,
-                    TEXT_2, TEXT_3, WARNING, RoundedButton, RoundedFrame,
-                    RoundedLabel, ui_font)
+                    DANGER, PINK, PINK_SOFT, RADIUS_LG, RED_SOFT, SELECT_BG,
+                    SELECT_FG, SUCCESS, TEXT, TEXT_2, TEXT_3, WARNING,
+                    RoundedButton, RoundedFrame, RoundedLabel, ui_font)
 
 WEEKDAYS = ("一", "二", "三", "四", "五", "六", "日")
 ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
@@ -126,7 +126,7 @@ class DashboardFrame(tk.Frame):
 
         actions = tk.Frame(content, bg=CARD)
         actions.pack(fill="x", padx=18, pady=(10, 10))
-        self.detail_btn = RoundedButton(actions, text="查看详情", kind="ghost",
+        self.detail_btn = RoundedButton(actions, text="查看完整信息", kind="ghost",
                                         command=self._detail, state="disabled")
         self.confirm_btn = RoundedButton(actions, text="确认加入待办", kind="primary",
                                          command=self._confirm, state="disabled")
@@ -138,6 +138,12 @@ class DashboardFrame(tk.Frame):
             button.pack(side="left", padx=(0, 8))
         tk.Label(actions, text="待确认事项不会自动进入待办", font=ui_font(8),
                  bg=CARD, fg=TEXT_3).pack(side="right")
+
+        self.selection_var = tk.StringVar(value="未选择事项 · 单击一行后查看完整信息")
+        selection_bar = tk.Frame(content, bg=SELECT_BG)
+        selection_bar.pack(fill="x", padx=18, pady=(0, 8))
+        tk.Label(selection_bar, textvariable=self.selection_var, font=ui_font(9, "bold"),
+                 bg=SELECT_BG, fg=SELECT_FG, anchor="w", padx=10, pady=6).pack(fill="x")
 
         holder = tk.Frame(content, bg=CARD)
         holder.pack(fill="both", expand=True, padx=(18, 8), pady=(0, 14))
@@ -205,15 +211,26 @@ class DashboardFrame(tk.Frame):
         else:
             self.empty_state.place(relx=0.5, rely=0.5, anchor="center")
         self.selected = None
+        self.selection_var.set("未选择事项 · 单击一行后查看完整信息")
         self._update_buttons()
 
     def _on_select(self, _event=None):
         selection = self.tree.selection()
         if not selection:
             self.selected = None
+            self.selection_var.set("未选择事项 · 单击一行后查看完整信息")
         else:
             status, todo_id = selection[0].split(":", 1)
             self.selected = (status, int(todo_id))
+            values = self.tree.item(selection[0], "values")
+            priority = values[0] if len(values) > 0 else ""
+            contact = values[2] if len(values) > 2 else ""
+            title = values[4] if len(values) > 4 else ""
+            due = values[5] if len(values) > 5 else ""
+            text = f"已选择 {priority} · {contact} · {title}"
+            if due:
+                text += f" · 截止 {due}"
+            self.selection_var.set(text)
         self._update_buttons()
 
     def _update_buttons(self):

@@ -42,10 +42,10 @@ from .update_service import UpdateService
 from .updater import UpdateError, apply_exe_pending, apply_pending
 from .version import __version__
 from .theme import (AMBER_SOFT, BG, BLUE, BLUE_HOVER, BLUE_SOFT, BORDER, CARD,
-                    DANGER, RADIUS_LG, RED_SOFT, SUCCESS, TEXT, TEXT_2,
-                    TEXT_3, WARNING, NavBar, RoundedBar, RoundedButton,
-                    RoundedFrame, RoundedLabel, ToggleChip, configure_styles,
-                    ui_font)
+                    DANGER, RADIUS_LG, RED_SOFT, SELECT_BG, SELECT_FG, SUCCESS,
+                    TEXT, TEXT_2, TEXT_3, WARNING, NavBar, RoundedBar,
+                    RoundedButton, RoundedFrame, RoundedLabel, ToggleChip,
+                    configure_styles, ui_font)
 
 PAGE_BG = BG
 
@@ -108,6 +108,8 @@ class InboxApp:
         self.napcat_webui_token_var = tk.StringVar(value="")
         self.login_window = None
         self.napcat_login_running = False
+        self._selection_vars = {}
+        self._detail_buttons = {}
         self._build()
         self.update_service = UpdateService(__version__, data_dir() / "updates", self.events)
         self.status.trace_add("write", lambda *_args: self._sync_status_visual())
@@ -230,7 +232,7 @@ class InboxApp:
         competition_buttons = tk.Frame(competition_body, bg=CARD)
         competition_buttons.pack(fill="x", pady=(0, 12))
         self.competition_detail_btn = RoundedButton(
-            competition_buttons, text="查看详情", kind="ghost",
+            competition_buttons, text="查看完整信息", kind="ghost",
             command=self.competition_detail, state="disabled")
         self.competition_confirm_btn = RoundedButton(
             competition_buttons, text="确认加入待办", kind="primary",
@@ -254,6 +256,7 @@ class InboxApp:
         self.competition_tree.tag_configure("overdue", background=RED_SOFT)
         self.competition_tree.bind("<Double-1>", lambda _event: self.competition_detail())
         self.competition_tree.bind("<<TreeviewSelect>>", self._competition_on_select)
+        self._detail_buttons["competition"] = self.competition_detail_btn
         self.competition_selected = None
         self.nav.add_page("competition", "比赛/竞赛", self.competition_tab)
 
@@ -269,7 +272,7 @@ class InboxApp:
             course_buttons, text="打开作业页", kind="ghost",
             command=self.course_open, state="disabled")
         self.course_detail_btn = RoundedButton(
-            course_buttons, text="查看详情", kind="ghost",
+            course_buttons, text="查看完整信息", kind="ghost",
             command=self.course_detail, state="disabled")
         self.course_confirm_btn = RoundedButton(
             course_buttons, text="确认加入待办", kind="primary",
@@ -293,14 +296,26 @@ class InboxApp:
         self.course_tree.tag_configure("overdue", background=RED_SOFT)
         self.course_tree.bind("<Double-1>", lambda _event: self.course_detail())
         self.course_tree.bind("<<TreeviewSelect>>", self._course_on_select)
+        self._detail_buttons["course"] = self.course_detail_btn
         self.course_selected = None
         self.nav.add_page("course", "课程作业", self.course_tab)
 
         self.msg_tab, msg_card = self._make_page("最近消息", "本地保存的最近 500 条文本，按接收时间倒序")
-        self._create_tree(self._card_body(msg_card), "messages",
+        msg_body = self._card_body(msg_card)
+        msg_buttons = tk.Frame(msg_body, bg=CARD)
+        msg_buttons.pack(fill="x", pady=(0, 10))
+        self.messages_detail_btn = RoundedButton(
+            msg_buttons, text="查看完整信息", kind="ghost", state="disabled",
+            command=lambda: self.show_selected("messages"))
+        self.messages_detail_btn.pack(side="left")
+        self.messages_hint = tk.Label(msg_buttons, text="单击选中，双击也可打开完整信息",
+                                      font=ui_font(8), bg=CARD, fg=TEXT_3)
+        self.messages_hint.pack(side="right")
+        self._create_tree(msg_body, "messages",
                           ("time", "contact", "kind", "priority", "text"),
                           ("时间", "联系人/群", "分类", "优先级", "消息摘要"),
                           (145, 180, 140, 60, 450), empty_text="暂无本地消息")
+        self._detail_buttons["messages"] = self.messages_detail_btn
         self.nav.add_page("messages", "最近消息", self.msg_tab)
 
         self.review_tab, review_card = self._make_page("待审核事务", "候选事项经你确认后才进入待办")
@@ -308,7 +323,7 @@ class InboxApp:
         review_buttons = tk.Frame(review_body, bg=CARD)
         review_buttons.pack(fill="x", pady=(0, 12))
         self.review_detail_btn = RoundedButton(
-            review_buttons, text="查看原消息", kind="ghost", state="disabled",
+            review_buttons, text="查看完整信息", kind="ghost", state="disabled",
             command=lambda: self.show_selected("review"))
         self.review_detail_btn.pack(side="left", padx=(0, 8))
         self.review_confirm_btn = RoundedButton(
@@ -324,6 +339,8 @@ class InboxApp:
                           ("编号", "优先级", "分数", "联系人", "分类", "截止/提示", "候选事项（需人工确认）"),
                           (45, 55, 50, 180, 150, 185, 320), empty_text="暂无待审核候选")
         self.review_tree.bind("<<TreeviewSelect>>", lambda _event: self._update_page_buttons())
+        self.review_tree.bind("<Double-1>", lambda _event: self.show_selected("review"))
+        self._detail_buttons["review"] = self.review_detail_btn
         self.nav.add_page("review", "待审核事务", self.review_tab)
 
         self.todo_tab, todo_card = self._make_page("已确认待办", "已经确认、等待处理或完成的事务")
@@ -331,7 +348,7 @@ class InboxApp:
         todo_buttons = tk.Frame(todo_body, bg=CARD)
         todo_buttons.pack(fill="x", pady=(0, 12))
         self.todo_detail_btn = RoundedButton(
-            todo_buttons, text="查看原消息", kind="ghost", state="disabled",
+            todo_buttons, text="查看完整信息", kind="ghost", state="disabled",
             command=lambda: self.show_selected("todos"))
         self.todo_detail_btn.pack(side="left", padx=(0, 8))
         self.todo_complete_btn = RoundedButton(
@@ -343,17 +360,27 @@ class InboxApp:
                           ("编号", "优先级", "分数", "联系人", "分类", "截止/提示", "已确认待办"),
                           (45, 55, 50, 180, 150, 185, 320), empty_text="暂无已确认待办")
         self.todos_tree.bind("<<TreeviewSelect>>", lambda _event: self._update_page_buttons())
+        self.todos_tree.bind("<Double-1>", lambda _event: self.show_selected("todos"))
+        self._detail_buttons["todos"] = self.todo_detail_btn
         self.nav.add_page("todos", "已确认待办", self.todo_tab)
 
         self.contact_tab, contact_card = self._make_page(
             "联系人排序", "按待处理工作量排序，不对联系人个人价值作评价")
-        self._create_tree(self._card_body(contact_card), "contacts",
+        contact_body = self._card_body(contact_card)
+        contact_buttons = tk.Frame(contact_body, bg=CARD)
+        contact_buttons.pack(fill="x", pady=(0, 10))
+        self.contacts_detail_btn = RoundedButton(
+            contact_buttons, text="查看完整信息", kind="ghost", state="disabled",
+            command=lambda: self.show_selected("contacts"))
+        self.contacts_detail_btn.pack(side="left")
+        self._create_tree(contact_body, "contacts",
                           ("contact", "messages", "today", "pending", "confirmed", "reply",
                            "max_priority", "max_score", "last_message", "rank_score"),
                           ("联系人/群", "消息数", "今日", "待审核", "已确认", "待回复",
                            "最高优先级", "最高分", "最近消息", "排序分"),
                           (200, 65, 55, 72, 72, 65, 88, 62, 140, 62),
                           empty_text="暂无联系人数据")
+        self._detail_buttons["contacts"] = self.contacts_detail_btn
         self.nav.add_page("contacts", "联系人排序", self.contact_tab)
 
     def _make_page(self, title, subtitle):
@@ -458,6 +485,13 @@ class InboxApp:
         window.bind("<Escape>", lambda _event: window.destroy())
 
     def _create_tree(self, parent, name, keys, headers, widths, empty_text="暂无记录"):
+        selection_var = tk.StringVar(value="未选择记录 · 单击一行查看操作")
+        self._selection_vars[name] = selection_var
+        bar = tk.Frame(parent, bg=SELECT_BG)
+        bar.pack(fill="x", pady=(0, 6))
+        tk.Label(bar, textvariable=selection_var, font=ui_font(9, "bold"), bg=SELECT_BG,
+                 fg=SELECT_FG, anchor="w", padx=10, pady=6).pack(fill="x")
+
         holder = tk.Frame(parent, bg=CARD)
         holder.pack(fill="both", expand=True)
         tree = ttk.Treeview(holder, columns=keys, show="headings", selectmode="browse")
@@ -476,7 +510,11 @@ class InboxApp:
         setattr(self, f"{name}_tree", tree)
         empty = tk.Label(holder, text=empty_text, font=ui_font(10), bg=CARD, fg=TEXT_3)
         setattr(self, f"{name}_empty", empty)
-        tree.bind("<Double-1>", lambda _event, tree_name=name: self.show_selected(tree_name))
+        tree.bind("<<TreeviewSelect>>",
+                  lambda _event, tree_name=name: self._update_tree_selection(tree_name),
+                  add="+")
+        if name in ("messages", "contacts"):
+            tree.bind("<Double-1>", lambda _event, tree_name=name: self.show_selected(tree_name))
 
     def _toggle_api_fields(self):
         api_mode = self.mode_var.get() == "api"
@@ -1105,17 +1143,19 @@ class InboxApp:
                     f"待回复项：{row['reply_count']}\n最高待处理优先级：{rank}\n排序分：{row['rank_score']}\n"
                     f"最近消息：{(row['last_message_at'] or '—')}\n\n最近消息（最多 12 条）")
             text = "\n".join(f"[{item['timestamp']}] {item['text']}" for item in recent) or "暂无本地消息"
-            self._show_detail_window(meta, text)
+            self._show_detail_window(meta, text, title=f"联系人 · {row['chat_label']}")
         elif tree_name == "messages":
             row = next((item for item in list_messages(1000) if item["message_key"] == selected), None)
             if not row:
                 return
             analysis = json.loads(row["analysis_json"])
-            meta = (f"来源联系人：{row['chat_label']}\n时间：{row['timestamp']}\n"
-                    f"分类：{'、'.join(analysis['categories'])}\n"
-                    f"优先级：{analysis['priority']}（分数 {analysis['importance']}）\n"
-                    f"理由：{'；'.join(analysis.get('reasons', []))}")
-            self._show_detail_window(meta, row["text"])
+            meta = (f"来源联系人/群：{row['chat_label']}\n消息时间：{row['timestamp'].replace('T', ' ')[:19]}\n"
+                    f"分类：{'、'.join(analysis.get('categories', []))}\n"
+                    f"优先级：{analysis.get('priority', '—')}（分数 {analysis.get('importance', '—')}）\n"
+                    f"需要回复：{'是' if analysis.get('needs_reply') else '否/不确定'}\n"
+                    f"日期提示：{analysis.get('date_hint') or '无'}\n"
+                    f"分析理由：{'；'.join(analysis.get('reasons', [])) or '无'}")
+            self._show_detail_window(meta, row["text"], title=f"消息 · {row['chat_label']}")
         else:
             rows = list_todos("pending_review" if tree_name == "review" else "confirmed")
             row = next((item for item in rows if str(item["id"]) == selected), None)
@@ -1124,19 +1164,46 @@ class InboxApp:
 
     def _show_todo_detail(self, row):
         due_display = format_due_display(row["due_date"], row["due_display"], row["due_hint"])
-        meta = (f"候选编号：{row['id']}\n联系人：{row['chat_label']}\n分类：{row['category']}\n"
-                f"优先级：{row['priority']}（分数 {row['importance']}）\n"
+        status_label = {"pending_review": "待确认", "confirmed": "已确认",
+                        "done": "已完成", "dismissed": "已忽略"}.get(
+                            row["status"], row["status"])
+        reasons = "；".join(json.loads(row["reasons_json"])) or "无"
+        message_time = (row["timestamp"] or "").replace("T", " ")[:19]
+        meta = (f"候选编号：{row['id']}\n联系人/群：{row['chat_label']}\n消息时间：{message_time}\n"
+                f"分类：{row['category']}\n优先级：{row['priority']}（分数 {row['importance']}）\n"
                 f"截止/提示：{due_display}\n原始时间提示：{row['due_hint'] or '无'}\n"
                 f"需要回复：{'是' if row['needs_reply'] else '不确定/否'}\n"
-                f"置信度：{row['confidence']:.0%}\n分析理由：{'；'.join(json.loads(row['reasons_json']))}\n"
-                f"状态：{row['status']}")
-        self._show_detail_window(meta, row["source_text"])
+                f"置信度：{row['confidence']:.0%}\n分析理由：{reasons}\n状态：{status_label}")
+        actions = []
+        if row["status"] == "pending_review":
+            actions.append(("确认加入待办", "primary",
+                            lambda window: self._detail_decide_todo(window, row["id"], "confirmed")))
+            actions.append(("忽略此候选", "danger",
+                            lambda window: self._detail_decide_todo(
+                                window, row["id"], "dismissed", confirm=True)))
+        elif row["status"] == "confirmed":
+            actions.append(("标记完成", "primary",
+                            lambda window: self._detail_decide_todo(window, row["id"], "done")))
+        self._show_detail_window(meta, row["source_text"], title=row["title"], actions=actions)
 
-    def _show_detail_window(self, meta, text):
+    def _detail_decide_todo(self, window, todo_id, decision, confirm=False):
+        if confirm and not messagebox.askyesno(
+                "忽略候选", "确认忽略这条候选？原始消息仍保留在本地消息列表中。",
+                parent=window):
+            return
+        if review_todo(todo_id, decision):
+            self.refresh_all()
+            window.destroy()
+            label = {"confirmed": "已加入待办", "dismissed": "已忽略", "done": "已标记完成"}[decision]
+            self.status.set(label)
+        else:
+            messagebox.showinfo("无法更新", "这条记录的状态已变化，请刷新后重试。", parent=window)
+
+    def _show_detail_window(self, meta, text, title="事项详情", actions=None):
         window = tk.Toplevel(self.root)
-        window.title("详情 · 本地")
-        window.geometry("780x560")
-        window.minsize(640, 460)
+        window.title(f"{str(title)[:30]} · 完整信息")
+        window.geometry("820x620")
+        window.minsize(680, 500)
         window.configure(bg=BG)
         window.transient(self.root)
         accent_row = tk.Frame(window, bg=CARD)
@@ -1146,35 +1213,51 @@ class InboxApp:
         head = tk.Frame(window, bg=CARD)
         head.pack(fill="x", padx=22, pady=(12, 10))
         title_box = tk.Frame(head, bg=CARD)
-        title_box.pack(side="left")
-        tk.Label(title_box, text="事项详情", font=ui_font(15, "bold"),
-                 bg=CARD, fg=TEXT).pack(anchor="w")
-        tk.Label(title_box, text="内容仅在本机展示", font=ui_font(8),
+        title_box.pack(side="left", fill="x", expand=True)
+        tk.Label(title_box, text=str(title), font=ui_font(15, "bold"),
+                 bg=CARD, fg=TEXT, anchor="w", justify="left",
+                 wraplength=560).pack(anchor="w")
+        tk.Label(title_box, text="完整信息 · 内容仅在本机展示", font=ui_font(8),
                  bg=CARD, fg=TEXT_3).pack(anchor="w", pady=(3, 0))
         RoundedButton(head, text="关闭", kind="ghost", height=32, padx=14,
-                      command=window.destroy).pack(side="right")
+                      command=window.destroy).pack(side="right", padx=(8, 0))
+        RoundedButton(head, text="复制全文", kind="soft", height=32, padx=14,
+                      command=lambda: self._copy_detail(window, text)).pack(side="right")
 
         body = tk.Frame(window, bg=BG)
-        body.pack(fill="both", expand=True, padx=22, pady=(0, 18))
+        body.pack(fill="both", expand=True, padx=22, pady=(0, 12))
         meta_card = RoundedFrame(body, radius=12, fill=CARD, outline=BORDER, bg=BG)
         meta_card.pack(fill="x")
-        tk.Label(meta_card.content, text=meta, justify="left", anchor="w", wraplength=680,
+        tk.Label(meta_card.content, text=meta, justify="left", anchor="w", wraplength=720,
                  font=ui_font(9), bg=CARD, fg=TEXT_2).pack(fill="x", padx=16, pady=14)
-        tk.Label(body, text="原始文字（本地保存）", font=ui_font(10, "bold"),
+        tk.Label(body, text=f"完整原始内容（{len(text)} 字，本地保存）", font=ui_font(10, "bold"),
                  bg=BG, fg=TEXT).pack(anchor="w", pady=(14, 6))
 
         text_holder = RoundedFrame(body, radius=12, fill=CARD, outline=BORDER, bg=BG)
         text_holder.pack(fill="both", expand=True)
         box = tk.Text(text_holder.content, wrap="word", font=ui_font(10), bg=CARD, fg=TEXT,
                       relief="flat", bd=0, padx=14, pady=12, insertbackground=TEXT,
-                      selectbackground=BLUE_SOFT, selectforeground=TEXT)
+                      selectbackground=SELECT_BG, selectforeground=TEXT)
         scroll = ttk.Scrollbar(text_holder.content, orient="vertical", command=box.yview)
         box.configure(yscrollcommand=scroll.set)
         box.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
         box.insert("1.0", text)
         box.configure(state="disabled")
+
+        footer = tk.Frame(window, bg=BG)
+        footer.pack(side="bottom", fill="x", padx=22, pady=(0, 16), before=body)
+        for label, kind, callback in (actions or []):
+            RoundedButton(footer, text=label, kind=kind, height=34,
+                          command=lambda cb=callback: cb(window)).pack(side="left", padx=(0, 8))
+        RoundedButton(footer, text="关闭", kind="ghost", height=34,
+                      command=window.destroy).pack(side="right")
         window.bind("<Escape>", lambda _event: window.destroy())
+
+    def _copy_detail(self, window, text):
+        window.clipboard_clear()
+        window.clipboard_append(text)
+        self.status.set("完整内容已复制到剪贴板。")
 
     def show_dashboard_detail(self, status, todo_id):
         rows = list_todos("pending_review" if status == "pending_review" else "confirmed")
@@ -1218,6 +1301,42 @@ class InboxApp:
     def dashboard_complete(self, todo_id):
         if review_todo(todo_id, "done"):
             self.refresh_all()
+
+    def _update_tree_selection(self, name):
+        tree = getattr(self, f"{name}_tree", None)
+        var = self._selection_vars.get(name)
+        button = self._detail_buttons.get(name)
+        if tree is None or var is None:
+            return
+        selection = tree.selection()
+        if not selection:
+            var.set("未选择记录 · 单击一行查看操作")
+            if button:
+                button.configure(state="disabled")
+            return
+        values = tree.item(selection[0], "values")
+
+        def val(index):
+            return str(values[index]) if index < len(values) else ""
+
+        if name in ("review", "todos", "competition"):
+            text = f"已选择 {val(1)} · {val(3)} · {val(6)}"
+            if val(5):
+                text += f" · 截止 {val(5)}"
+        elif name == "course":
+            text = f"已选择课程作业 · {val(0)} · {val(1)} · 截止 {val(2)}"
+        elif name == "messages":
+            snippet = val(4)
+            if len(snippet) > 70:
+                snippet = snippet[:70] + "…"
+            text = f"已选择消息 · {val(1)} · {val(3)} · {snippet}"
+        elif name == "contacts":
+            text = f"已选择 {val(0)} · 消息 {val(1)} 条 · 待审核 {val(3)} · 待回复 {val(5)}"
+        else:
+            text = "已选择 · " + " · ".join(value for value in values[:3] if value)
+        var.set(text)
+        if button:
+            button.configure(state="normal")
 
     def _update_page_buttons(self):
         review_ready = bool(self.review_tree.selection())
@@ -1325,7 +1444,32 @@ class InboxApp:
                 f"待办状态：{todo_text}\n首次同步：{self._local_iso_text(row['first_seen_at'])}\n"
                 f"最近同步：{self._local_iso_text(row['updated_at'])}\n"
                 f"作业链接：{row['detail_url'] or '平台未提供'}")
-        self._show_detail_window(meta, row["title"])
+        actions = []
+        if row["status"] == "pending_review":
+            actions.append(("确认加入待办", "primary",
+                            lambda window: self._detail_decide_course(
+                                window, row["assignment_key"], "confirmed")))
+            actions.append(("忽略作业", "danger",
+                            lambda window: self._detail_decide_course(
+                                window, row["assignment_key"], "dismissed", confirm=True)))
+        elif row["status"] == "confirmed":
+            actions.append(("标记完成", "primary",
+                            lambda window: self._detail_decide_course(
+                                window, row["assignment_key"], "done")))
+        self._show_detail_window(meta, row["title"], title=f"课程作业 · {row['title']}",
+                                 actions=actions)
+
+    def _detail_decide_course(self, window, assignment_key, decision, confirm=False):
+        if confirm and not messagebox.askyesno(
+                "忽略作业", "确认忽略这条课程作业？它会从列表中隐藏，原始记录仍保留在本地。",
+                parent=window):
+            return
+        if review_course_assignment(assignment_key, decision):
+            self.refresh_all()
+            window.destroy()
+            self.status.set("课程作业状态已更新。")
+        else:
+            messagebox.showinfo("无法更新", "这条作业的状态已变化，请刷新后重试。", parent=window)
 
     def course_open(self):
         row = self._course_row()
