@@ -6,11 +6,13 @@ import secrets
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 import webbrowser
 from datetime import date, datetime
 from pathlib import Path
 from tkinter import ttk, messagebox
+from urllib.parse import urlparse
 from .classifier import classify_message, message_context
 from .api_classifier import classify_with_api, validate_api_endpoint
 from .api_config import API_PRESETS, API_PRESET_MODELS
@@ -19,10 +21,15 @@ from .chaoxing_bridge import DEFAULT_PORT as CHAOXING_DEFAULT_PORT, ChaoxingBrid
 from .chaoxing_dialog import ChaoxingAccessDialog
 from .config import HISTORY_API_DEFAULT, LOCAL_API_DEFAULT, data_dir, load_settings, save_settings
 from .localnet import is_remote_url
+from .login_dialog import NapCatLoginDialog
 from .napcat_api import NapCatClient
+from .napcat_launcher import (find_napcat_root, is_port_ready, read_webui_port,
+                              read_webui_token, start_napcat, wait_port)
+from .napcat_webui import NapCatWebUI, NapCatWebUIError
 from .onebot import OneBotListener, validate_local_ws_url
 from .secret_store import (SECRET_API_KEY, SECRET_CHAOXING_TOKEN, SECRET_HTTP_TOKEN,
-                           SECRET_WS_TOKEN, clear_all_secrets, load_secret, save_secret)
+                           SECRET_NAPCAT_WEBUI_TOKEN, SECRET_WS_TOKEN, clear_all_secrets,
+                           load_secret, save_secret)
 from .settings_drawer import SettingsDrawer
 from .store import (init_db, insert_event, list_messages, list_todos, list_contacts,
                     list_competition_items, list_course_assignments, get_course_assignment,
@@ -32,7 +39,7 @@ from .timeparse import format_due_display
 from .dashboard import DashboardFrame
 from .import_dialog import HistoryImportDialog
 from .update_service import UpdateService
-from .updater import UpdateError, apply_pending
+from .updater import UpdateError, apply_exe_pending, apply_pending
 from .version import __version__
 from .theme import (AMBER_SOFT, BG, BLUE, BLUE_HOVER, BLUE_SOFT, BORDER, CARD,
                     DANGER, RADIUS_LG, RED_SOFT, SUCCESS, TEXT, TEXT_2,
@@ -90,6 +97,17 @@ class InboxApp:
             value=bool(self.settings.get("auto_download_updates", True)))
         self.auto_apply_updates_var = tk.BooleanVar(
             value=bool(self.settings.get("auto_apply_updates", True)))
+        self.napcat_root_var = tk.StringVar(value=self.settings.get("napcat_root", ""))
+        self.napcat_webui_url_var = tk.StringVar(
+            value=self.settings.get("napcat_webui_url", "http://127.0.0.1:6099"))
+        self.auto_launch_napcat_var = tk.BooleanVar(
+            value=bool(self.settings.get("auto_launch_napcat", True)))
+        self.auto_quick_login_var = tk.BooleanVar(
+            value=bool(self.settings.get("auto_quick_login", True)))
+        self.napcat_webui_token_memory = load_secret(SECRET_NAPCAT_WEBUI_TOKEN)
+        self.napcat_webui_token_var = tk.StringVar(value="")
+        self.login_window = None
+        self.napcat_login_running = False
         self._build()
         self.update_service = UpdateService(__version__, data_dir() / "updates", self.events)
         self.status.trace_add("write", lambda *_args: self._sync_status_visual())
@@ -515,6 +533,16 @@ class InboxApp:
         self.token_memory = token
         save_secret(SECRET_API_KEY, api_key)
         save_secret(SECRET_WS_TOKEN, token)
+        webui_token_field = self.napcat_webui_token_var.get().strip()
+        if webui_token_field:
+            self.napcat_webui_token_memory = webui_token_field
+            save_secret(SECRET_NAPCAT_WEBUI_TOKEN, webui_token_field)
+            self.napcat_webui_token_var.set("")
+        webui_url = self.napcat_webui_url_var.get().strip() or "http://127.0.0.1:6099"
+        try:
+            webui_url = NapCatWebUI(webui_url).base
+        except NapCatWebUIError as exc:
+            raise ValueError(str(exc))
         self.settings.update({
             "ws_url": safe_url,
             "include_group_messages": self.group_var.get(),
@@ -529,6 +557,10 @@ class InboxApp:
             "auto_check_updates": self.auto_check_updates_var.get(),
             "auto_download_updates": self.auto_download_updates_var.get(),
             "auto_apply_updates": self.auto_apply_updates_var.get(),
+            "napcat_root": self.napcat_root_var.get().strip(),
+            "napcat_webui_url": webui_url,
+            "auto_launch_napcat": self.auto_launch_napcat_var.get(),
+            "auto_quick_login": self.auto_quick_login_var.get(),
         })
         save_settings(self.settings)
         self.api_endpoint_var.set(self.settings["api_endpoint"])
@@ -573,7 +605,11 @@ class InboxApp:
     def _auto_connect(self):
         if self.closing or self.listener:
             return
-        if self.auto_connect_var.get():
+        if not self.auto_connect_var.get():
+            return
+        if self.auto_launch_napcat_var.get():
+            self.start_napcat_and_login(auto=True)
+        else:
             self.start_listener(auto=True)
 
     def _periodic_refresh(self):
@@ -605,12 +641,22 @@ class InboxApp:
             self.drawer.set_update_status("正在检查更新…", TEXT_3)
 
     def apply_update_now(self):
+        staging = data_dir() / "updates"
         if getattr(sys, "frozen", False):
-            messagebox.showinfo("无法自动更新", "打包版请手动下载新版本。", parent=self.root)
+            try:
+                result = apply_exe_pending(Path(sys.executable), staging, __version__)
+            except UpdateError as exc:
+                messagebox.showerror("更新失败", str(exc), parent=self.root)
+                return
+            if not result.applied:
+                messagebox.showinfo("无法应用更新", "没有已下载的可执行更新包。", parent=self.root)
+                return
+            messagebox.showinfo("更新已应用", "程序将重新启动。", parent=self.root)
+            subprocess.Popen([sys.executable, *sys.argv[1:]])
+            self.close()
             return
         try:
-            result = apply_pending(Path(__file__).resolve().parent.parent,
-                                   data_dir() / "updates", __version__)
+            result = apply_pending(Path(__file__).resolve().parent.parent, staging, __version__)
         except UpdateError as exc:
             messagebox.showerror("更新失败", str(exc), parent=self.root)
             return
@@ -643,6 +689,123 @@ class InboxApp:
         self.api_key_var.set("")
         save_secret(SECRET_API_KEY, "")
         self.drawer.probe_status.configure(text="已清除保存的 API Key。", fg=TEXT_2)
+
+    def auto_detect_napcat_root(self):
+        root = find_napcat_root(self.napcat_root_var.get().strip()
+                                or self.settings.get("napcat_root"))
+        if root is None:
+            messagebox.showinfo("未找到 NapCat",
+                                "没有在常见位置找到 NapCatWinBootMain.exe；请手动填写安装目录。",
+                                parent=self.root)
+            return
+        self.napcat_root_var.set(str(root))
+        self.status.set(f"已找到 NapCat 安装目录：{root}")
+
+    def auto_read_webui_token(self):
+        root = find_napcat_root(self.napcat_root_var.get().strip()
+                                or self.settings.get("napcat_root"))
+        if root is None:
+            self.auto_detect_napcat_root()
+            root = find_napcat_root(self.napcat_root_var.get().strip())
+        if root is None:
+            return
+        self.napcat_root_var.set(str(root))
+        token = read_webui_token(root)
+        if not token:
+            messagebox.showinfo("未读取到 Token",
+                                "NapCat 配置中没有 WebUI Token；请先启动一次 NapCat 或手动填写。",
+                                parent=self.root)
+            return
+        self.napcat_webui_token_memory = token
+        save_secret(SECRET_NAPCAT_WEBUI_TOKEN, token)
+        self.napcat_webui_url_var.set(f"http://127.0.0.1:{read_webui_port(root)}")
+        self.status.set("已读取本机 NapCat WebUI Token，并用 DPAPI 加密保存。")
+
+    def start_napcat_and_login(self, auto=False):
+        if self.napcat_login_running:
+            return
+        self.napcat_login_running = True
+        root_hint = (self.napcat_root_var.get().strip()
+                     or self.settings.get("napcat_root", ""))
+        webui_url = (self.napcat_webui_url_var.get().strip()
+                     or self.settings.get("napcat_webui_url", "http://127.0.0.1:6099"))
+        auto_quick = self.auto_quick_login_var.get()
+        threading.Thread(target=self._napcat_login_worker,
+                         args=(auto, root_hint, webui_url, auto_quick), daemon=True).start()
+
+    def _napcat_login_worker(self, auto, root_hint, webui_url, auto_quick):
+        try:
+            root = find_napcat_root(root_hint)
+            if root is None:
+                raise NapCatWebUIError("未找到 NapCat 安装目录；请在设置 → 连接中填写或自动检测。")
+            self.events.put(("napcat_root_found", str(root)))
+            webui = NapCatWebUI(webui_url)
+            port = urlparse(webui.base).port or 6099
+            if not is_port_ready("127.0.0.1", port, timeout=0.5):
+                self.events.put(("napcat_status", "正在启动 NapCat（无控制台窗口）…"))
+                start_napcat(root)
+                if not wait_port("127.0.0.1", port, timeout=30):
+                    raise NapCatWebUIError("NapCat 启动超时：WebUI 端口未就绪。")
+            token = self.napcat_webui_token_memory or read_webui_token(root)
+            if not token:
+                raise NapCatWebUIError("缺少 NapCat WebUI Token；请点击“读取 WebUI Token”或手动填写。")
+            if not self.napcat_webui_token_memory:
+                self.napcat_webui_token_memory = token
+                save_secret(SECRET_NAPCAT_WEBUI_TOKEN, token)
+            webui.login(token)
+            if webui.check_status().is_login:
+                self.events.put(("napcat_logged_in", None))
+                return
+            accounts = webui.quick_login_list() if auto_quick else []
+            if accounts:
+                webui.set_quick_login(accounts[0]["uin"])
+                self.events.put(("napcat_status",
+                                 f"正在使用已保存账号 {accounts[0]['nick']} 快速登录…"))
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    if webui.check_status().is_login:
+                        self.events.put(("napcat_logged_in", None))
+                        return
+                    time.sleep(1.5)
+                raise NapCatWebUIError("快速登录超时；请手动扫码登录。")
+            self.events.put(("napcat_login_needed", webui))
+        except Exception as exc:
+            self.napcat_login_running = False
+            if auto:
+                self.events.put(("napcat_status", f"NapCat 自动登录未启动：{str(exc)[:160]}"))
+                self.events.put(("napcat_fallback_connect", None))
+            else:
+                self.events.put(("napcat_error", str(exc)[:200]))
+
+    def _on_napcat_logged_in(self):
+        self.napcat_login_running = False
+        if self.login_window is not None:
+            try:
+                self.login_window.closed = True
+                self.login_window.destroy()
+            except tk.TclError:
+                pass
+            self.login_window = None
+        self.status.set("QQ 已登录，正在连接…")
+        self.start_listener(auto=True)
+
+    def _open_login_dialog(self, webui):
+        self.napcat_login_running = False
+        if self.login_window is not None:
+            try:
+                if self.login_window.winfo_exists():
+                    self.login_window.lift()
+                    return
+            except tk.TclError:
+                pass
+        self.login_window = NapCatLoginDialog(
+            self.root, webui,
+            on_logged_in=self._on_napcat_logged_in,
+            on_cancel=self._on_login_cancel)
+
+    def _on_login_cancel(self):
+        self.login_window = None
+        self.status.set("已取消扫码登录；可在设置 → 连接中重新发起。")
 
     def _set_window_icon(self):
         icon = self._asset_path("icon.ico")
@@ -807,6 +970,18 @@ class InboxApp:
                     self.drawer.set_update_error(item[1])
                 elif item[0] == "api_probe_result":
                     self.drawer.set_probe_result(item[1])
+                elif item[0] == "napcat_status":
+                    self.status.set(item[1])
+                elif item[0] == "napcat_root_found":
+                    self.napcat_root_var.set(item[1])
+                elif item[0] == "napcat_error":
+                    messagebox.showerror("NapCat 登录失败", item[1], parent=self.root)
+                elif item[0] == "napcat_logged_in":
+                    self._on_napcat_logged_in()
+                elif item[0] == "napcat_login_needed":
+                    self._open_login_dialog(item[1])
+                elif item[0] == "napcat_fallback_connect":
+                    self.start_listener(auto=True)
         except queue.Empty:
             pass
         if dirty:
@@ -1266,8 +1441,10 @@ class InboxApp:
             self.api_key_memory = ""
             self.token_memory = ""
             self.http_token_memory = ""
+            self.napcat_webui_token_memory = ""
             self.api_key_var.set("")
             self.token_var.set("")
+            self.napcat_webui_token_var.set("")
             self.remote_consent_var.set(False)
             self.settings["allow_remote_api"] = False
             save_settings(self.settings)
@@ -1311,8 +1488,10 @@ class InboxApp:
         self.api_key_memory = ""
         self.token_memory = ""
         self.http_token_memory = ""
+        self.napcat_webui_token_memory = ""
         self.api_key_var.set("")
         self.token_var.set("")
+        self.napcat_webui_token_var.set("")
         self.root.destroy()
 
 def main():

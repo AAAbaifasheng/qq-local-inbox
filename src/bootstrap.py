@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-from .updater import UpdateError, apply_pending
+from .updater import UpdateError, apply_exe_pending, apply_pending
 from .version import __version__
 
 
@@ -28,14 +28,25 @@ def _auto_apply_enabled(root: Path) -> bool:
 
 
 def apply_pending_at_startup() -> bool:
-    if getattr(sys, "frozen", False):
-        return False
     root = data_root()
     if not _auto_apply_enabled(root):
         return False
+    staging = root / "updates"
+    if getattr(sys, "frozen", False):
+        try:
+            result = apply_exe_pending(Path(sys.executable), staging, __version__)
+        except UpdateError:
+            return False
+        if not result.applied:
+            return False
+        try:
+            os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+        except OSError:
+            return False
+        return True
     app_root = Path(__file__).resolve().parent.parent
     try:
-        result = apply_pending(app_root, root / "updates", __version__)
+        result = apply_pending(app_root, staging, __version__)
     except UpdateError:
         return False
     if not result.applied:

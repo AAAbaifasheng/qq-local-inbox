@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-21A96B?style=flat-square" alt="MIT"></a>
   <a href="PRIVACY.md"><img src="https://img.shields.io/badge/privacy-local--first-00AEEC?style=flat-square" alt="Local first"></a>
   <a href="docs/NAPCAT_SETUP.md"><img src="https://img.shields.io/badge/NapCat-OneBot%2011-FB7299?style=flat-square" alt="NapCat OneBot 11"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.3.0-6C5CE7?style=flat-square" alt="Version 0.3.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.0-6C5CE7?style=flat-square" alt="Version 0.4.0"></a>
 </p>
 
 <p align="center">
@@ -45,6 +45,8 @@
 | 群聊降噪 | 只有 @你、群公告/管理员要求、明确截止通知、比赛信息才进入候选；闲聊和广告只本地归档 |
 | 重复合并 | 同一会话、同一文本、同一截止日的活跃待办自动合并；学习通作业按课程+作业 ID 去重 |
 | 抽屉式设置 | 连接、模型、更新、数据四个页签；主界面不再被设置面板挤压 |
+| 一键启动 NapCat | Inbox 启动时以无控制台窗口方式拉起 NapCat；已保存账号可免扫码快速登录 |
+| 应用内扫码登录 | 从本机 NapCat WebUI 获取二维码并在应用内展示，手机扫码后自动连接；不保存 QQ 账号密码 |
 | API 配置 | DeepSeek / Ollama / LM Studio 预设，自动拉取模型列表；测试连接只读模型列表，不发送聊天文本 |
 | 自动更新 | 从 GitHub Releases 检查并校验 SHA256，小版本自动下载、下次启动应用；更新前备份，失败回滚 |
 | 凭据与隐私 | API Key / NapCat Token / 学习通接入令牌用 Windows DPAPI 加密；远程 API 必须显式确认 |
@@ -112,6 +114,15 @@ flowchart LR
 
 ## 快速开始
 
+**方式一：直接下载 exe（推荐给普通用户）**
+
+1. 从 [Releases](https://github.com/AAAbaifasheng/qq-local-inbox/releases/latest) 下载 `QQLocalInbox-<版本>-win64.exe`。
+2. 安装并登录 NapCat（首次需要），在 Inbox 设置里填一次 NapCat 安装目录（可点“检测”自动找）。
+3. 双击 exe。Inbox 会隐藏启动 NapCat；已保存账号会免扫码登录，否则弹出应用内二维码，用手机 QQ 扫一下。
+4. 登录成功后自动连接、同步今天消息。
+
+**方式二：源码运行**
+
 1. 安装 Python 3.11/3.12（勾选 Tcl/Tk），并安装 NapCatQQ、登录 QQ。
 2. 在项目目录安装依赖：
 
@@ -121,10 +132,10 @@ flowchart LR
    ```
 
 3. 按 [NapCat 配置](docs/NAPCAT_SETUP.md) 开启本机 WebSocket Server（`127.0.0.1:3001`）；需要同步今天或导入历史时，再开启本机 HTTP Server（`127.0.0.1:3000`）。
-4. 双击 `run.bat`，点击“连接设置”：
+4. 双击 `run.bat`，点击右上角“设置”：
    - 先用“本地规则”跑通，不调用模型；
    - 需要语义分析时，切换到“大模型 API”，选择本机 Ollama/LM Studio 或显式确认后的 DeepSeek；
-   - 点击“开始监听”。
+   - 点击“保存并连接”。
 5. 可选：按 [学习通作业接入](docs/CHAOXING_SETUP.md) 安装油猴脚本，把学习通作业同步到“课程作业”页。
 
 | 分析方式 | 适用场景 | 是否外发 |
@@ -135,7 +146,9 @@ flowchart LR
 
 ## Windows 安装
 
-要求：Windows 10/11 x64、Python 3.11 或 3.12（含 Tcl/Tk）和能访问 PyPI 下载 `websocket-client` 的网络。联网用于首次安装依赖；规则模式运行时不调用模型。本机模型模式只访问你配置的本机端点；DeepSeek 等远程模式需显式勾选知情确认。
+**exe 版**：Windows 10/11 x64 即可，不需要安装 Python；首次运行如被 SmartScreen 拦截，请核对文件来源与 Release 的 SHA256 后放行。
+
+**源码版**要求：Windows 10/11 x64、Python 3.11 或 3.12（含 Tcl/Tk）和能访问 PyPI 下载依赖的网络。联网用于首次安装依赖；规则模式运行时不调用模型。本机模型模式只访问你配置的本机端点；DeepSeek 等远程模式需显式勾选知情确认。
 
 1. 下载并解压项目目录。
 2. 右键 PowerShell，进入解压目录。
@@ -153,8 +166,8 @@ flowchart LR
 
 ## 使用
 
-1. 确认 NapCat 已经运行，并配置 `ws://127.0.0.1:3001`（端口以实际配置为准）。
-2. 首次启动应用，点击右上角“设置”，在右侧抽屉的“连接”页输入 OneBot Access Token（NapCat 未设置 Token 时可留空），选择“本地规则”或“大模型 API”，点击“保存并连接”或右上角“开始监听”。Token/Key 会用 DPAPI 加密保存；之后启动会按设置自动连接，不需要重复输入。
+1. 首次使用前安装 NapCat；在“设置 → 连接”里填写 NapCat 安装目录（点“检测”可自动查找），并点一次“读取 WebUI Token”。
+2. 启动 Inbox。默认会隐藏启动 NapCat：已保存账号直接快速登录，否则弹出应用内二维码，用手机 QQ 扫码并在手机上确认。登录成功后自动连接；也可以在“连接”页手动点“启动并登录 NapCat”。
 3. 应用会按设置自动同步今天的最近会话消息（默认开启）；开启群消息后，实时群聊也会进入“最近消息”。命中行动规则的消息会自动出现在“待审核事务”和首页“优先处理”。
 4. 在“事务中心”或“待审核事务”查看原消息，点击“确认加入待办”或“忽略此候选”。已确认项目可标记完成。“比赛/竞赛”页集中罗列所有比赛、竞赛事项（待确认/已确认/已完成），可直接查看详情、确认、忽略或标记完成。
 5. 如需处理更早的聊天记录，打开“设置 → 数据”，点击“导入历史消息”，填写本机 NapCat HTTP 地址（默认 `http://127.0.0.1:3000`）、HTTP Access Token，选择好友/群与条数后导入。导入使用当前分析模式，导入的候选仍需人工确认；远程模式下对话框会提示每条导入文本会发送给服务商。
@@ -175,12 +188,12 @@ flowchart LR
 
 - 当前版本显示在窗口标题和“设置 → 更新”页；版本变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 - 启动时会检查 GitHub Releases；发现小版本更新后自动下载并校验 SHA256，**下次启动时自动应用**，不会在分析或同步过程中替换文件。
-- 更新前会备份 `src/`、`assets/` 等运行文件；应用失败会尝试回滚。大版本更新只提示，需要手动确认。
+- 更新前会备份运行文件；应用失败会尝试回滚。大版本更新只提示，需要手动确认。
 - “设置 → 更新”可以关闭自动检查、自动下载或自动应用，也可以手动“检查更新”或“立即重启并更新”。
-- 开发目录（存在 `.git`）默认不会自动覆盖，避免冲掉本地修改；源码安装和 PyInstaller 打包版的更新方式不同，打包版请手动替换。
+- 开发目录（存在 `.git`）默认不会自动覆盖，避免冲掉本地修改；exe 版会下载新 exe、校验 SHA256，并在下次启动时改名替换当前 exe（保留上一版备份）。
 - 更新检查只访问本项目的 GitHub Releases，不上传聊天记录、Token 或 API Key。
 
-程序不会自动登录 QQ；启动时可同步今天最近会话，但不会补抓更早历史；不会自动替你答应邀约或回复联系人。连接中断期间的消息可能漏收，实时链路不追补历史记录；更早的记录只能由你手动导入。
+程序不会代替你扫码，也不保存 QQ 账号密码；扫码后的确认由你在手机 QQ 完成。已保存账号的“免扫码”使用的是 NapCat 自身的快速登录能力。启动时可同步今天最近会话，但不会补抓更早历史；不会自动替你答应邀约或回复联系人。连接中断期间的消息可能漏收，实时链路不追补历史记录；更早的记录只能由你手动导入。
 
 ## 费用与本地模型
 
@@ -219,31 +232,31 @@ DeepSeek 当前官方模型为 `deepseek-flash` 与 `deepseek-v4-pro`；应用�
 
 ## 发布
 
-当前发布流程（源码版）：
-
 ```powershell
 # 1. 更新 VERSION 和 CHANGELOG.md，跑测试
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 
-# 2. 生成 zip 与 latest.json
-$env:GITHUB_REF_NAME = "v0.3.0"
+# 2. 生成源码 zip、exe 与 latest.json
+$env:GITHUB_REF_NAME = "v0.4.0"
 .\.venv\Scripts\python.exe scripts\build_release.py
+.\.venv\Scripts\python.exe -m pip install pyinstaller
+.\.venv\Scripts\python.exe scripts\build_exe.py
 
-# 3. 创建 GitHub Release 并上传两个资产
-gh release create v0.3.0 release\QQLocalInbox-0.3.0.zip release\latest.json `
-  --title "QQ Local Inbox v0.3.0" --notes-file CHANGELOG.md
+# 3. 创建 GitHub Release 并上传三个资产
+gh release create v0.4.0 release\QQLocalInbox-0.4.0.zip release\QQLocalInbox-0.4.0-win64.exe release\latest.json `
+  --title "QQ Local Inbox v0.4.0" --notes-file CHANGELOG.md
 ```
 
-`scripts/release-workflow.yml` 是等价的 Actions 模板；要把发布完全自动化，需要给 GitHub 凭据补充 `workflow` 权限，然后把文件移动到 `.github/workflows/release.yml`。在此之前，手动执行上面的步骤即可，客户端更新检查仍然可用。
+`scripts/release-workflow.yml` 是 Actions 模板；要把发布完全自动化，需要给 GitHub 凭据补充 `workflow` 权限，并把文件移动到 `.github/workflows/`。在此之前，手动执行上面的步骤即可，客户端更新检查仍然可用。
 
-## 打包成 EXE（可选）
+## 打包成 EXE
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install pyinstaller
-.\.venv\Scripts\pyinstaller.exe --noconfirm --clean --windowed --name QQLocalInbox --add-data "assets;assets" --collect-all websocket --hidden-import=tkinter --hidden-import=tkinter.ttk launcher.py
+.\.venv\Scripts\python.exe scripts\build_exe.py
 ```
 
-生成文件在 `dist\QQLocalInbox\` 或 PyInstaller 当前版本对应目录。第一次建议使用 onedir 目录包，方便排查依赖。打包产物不包含你的 QQ Token 或消息数据库。
+生成 `release\QQLocalInbox-<版本>-win64.exe`（onefile）。首次启动需要解包，约 2–5 秒；打包产物不包含你的 Token、API Key 或消息数据库。exe 版更新会在下次启动时替换当前 exe，并保留上一版备份。
 
 ## 重要限制
 
@@ -258,7 +271,10 @@ gh release create v0.3.0 release\QQLocalInbox-0.3.0.zip release\latest.json `
 - 当前版本无消息编辑监听、撤回同步、文件下载、OCR、语音转写、桌面通知或定时提醒。
 - 本地 SQLite 当前没有应用层字段加密；请保护 Windows 账户，启用 BitLocker/设备加密，并确保备份加密。清空功能会尝试 checkpoint/VACUUM，但不保证清除 SSD 磨损均衡、系统快照或既有备份中的所有残留。
 - 历史导入依赖 NapCat HTTP Server，一次只读取所选会话最近 N 条文本；不下载媒体。导入文本按当前分析模式处理，远程模式下会发送给服务商；中途失败时已导入数据会保留，重试会按消息去重。
-- 自动更新只覆盖源码安装；PyInstaller 打包版需要手动替换。更新信任本项目的 GitHub 仓库与发布账号，SHA256 只能证明文件与清单一致，不能替代代码签名。
+- 自动更新只覆盖源码安装和本项目的 onefile exe；exe 版会在下次启动时替换当前 exe。更新信任本项目的 GitHub 仓库与发布账号，SHA256 只能证明文件与清单一致，不能替代代码签名。
+- 应用内登录展示的是 NapCat 提供的二维码；扫码与手机确认必须由你本人完成，程序不保存 QQ 账号密码，也不接入密码登录。
+- WebUI Token 默认从本机 NapCat 的 `webui.json` 读取，也可以手动填写；它等同于本机 NapCat 管理权限，不要分享或提交到仓库。
+- onefile exe 首次启动需要解包，约 2–5 秒；部分杀软可能对 PyInstaller 单文件报未知来源，请核对 Release 的 SHA256。
 - 若 NapCat 的 WS/HTTP Token 为空，程序允许留空连接，但任何本机进程都可能访问这些端口；共享电脑上建议为 NapCat 设置 Token 并在程序中填写。
 
 ## 技术结构
@@ -278,6 +294,9 @@ gh release create v0.3.0 release\QQLocalInbox-0.3.0.zip release\latest.json `
 - `src/api_probe.py`：模型列表探测与连接测试；只读模型接口，不发送聊天文本
 - `src/api_config.py`：API 预设端点与默认模型
 - `src/settings_drawer.py`：右侧抽屉式设置、四页签与更新/探测状态展示
+- `src/napcat_launcher.py`：NapCat 路径探测、隐藏启动、端口等待与 WebUI token 读取
+- `src/napcat_webui.py`：NapCat WebUI 登录、二维码、状态轮询与快速登录
+- `src/login_dialog.py`：应用内扫码登录窗口（Canvas 绘制二维码）
 - `src/updater.py`：更新清单校验、下载、SHA256、zip 安全解压、备份与回滚
 - `src/update_service.py`：后台检查与下载更新，结果通过事件队列回到界面
 - `src/bootstrap.py`：启动前应用已暂存更新并重启

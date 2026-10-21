@@ -55,6 +55,9 @@ class UpdateInfo:
     notes: str = ""
     published_at: str = ""
     mandatory: bool = False
+    exe_url: str = ""
+    exe_sha256: str = ""
+    exe_size: int = 0
 
 
 @dataclass(frozen=True)
@@ -142,6 +145,18 @@ def select_update(manifest: dict, current_version: str, base_url: str = MANIFEST
         raise UpdateError("更新包大小超出允许范围")
     notes = str(manifest.get("notes", ""))[:2000]
     published_at = str(manifest.get("published_at", ""))[:80]
+    exe_url = ""
+    exe_sha256 = ""
+    exe_size = 0
+    raw_exe = str(manifest.get("exe", "") or "").strip()
+    if raw_exe:
+        exe_url = _validate_url(urljoin(base_url, raw_exe))
+        exe_sha256 = str(manifest.get("exe_sha256", "")).strip().lower()
+        if not _SHA256_RE.fullmatch(exe_sha256):
+            raise UpdateError("可执行更新包哈希格式不正确")
+        exe_size = int(manifest.get("exe_size", 0))
+        if not 0 < exe_size <= MAX_ARCHIVE_BYTES:
+            raise UpdateError("可执行更新包大小超出允许范围")
     return UpdateInfo(
         version=version,
         zip_url=zip_url,
@@ -150,50 +165,14 @@ def select_update(manifest: dict, current_version: str, base_url: str = MANIFEST
         notes=notes,
         published_at=published_at,
         mandatory=bool(manifest.get("mandatory", False)),
+        exe_url=exe_url,
+        exe_sha256=exe_sha256,
+        exe_size=exe_size,
     )
 
 
 def check_for_update(current_version: str, url: str = MANIFEST_URL, timeout: float = 8.0) -> UpdateInfo | None:
     return select_update(fetch_manifest(url, timeout), current_version, url)
-
-
-def download_update(info: UpdateInfo, dest_dir: Path, timeout: float = 30.0) -> Path:
-    _validate_url(info.zip_url)
-    dest_dir = Path(dest_dir)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    name = PurePosixPath(urlparse(info.zip_url).path).name or f"QQLocalInbox-{info.version}.zip"
-    target = dest_dir / name
-    if target.exists():
-        target.unlink()
-    digest = hashlib.sha256()
-    received = 0
-    request = Request(info.zip_url, headers={"User-Agent": "QQLocalInbox-Updater/1"})
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            _validate_url(response.geturl())
-            with target.open("wb") as handle:
-                while True:
-                    chunk = response.read(64 * 1024)
-                    if not chunk:
-                        break
-                    received += len(chunk)
-                    if received > MAX_ARCHIVE_BYTES:
-                        raise UpdateError("更新包超过大小上限")
-                    handle.write(chunk)
-                    digest.update(chunk)
-    except UpdateError:
-        target.unlink(missing_ok=True)
-        raise
-    except Exception as exc:
-        target.unlink(missing_ok=True)
-        raise UpdateError(f"下载更新失败：{exc}") from exc
-    if received != info.size:
-        target.unlink(missing_ok=True)
-        raise UpdateError("更新包大小与清单不一致")
-    if digest.hexdigest() != info.sha256:
-        target.unlink(missing_ok=True)
-        raise UpdateError("更新包 SHA256 校验失败")
-    return target
 
 
 def safe_extract(archive_path: Path, dest_dir: Path) -> list[str]:
@@ -371,3 +350,118 @@ def apply_pending(
     shutil.rmtree(staged.path, ignore_errors=True)
     _log(staging_root, f"applied {staged.info.version} from {current_version}")
     return ApplyResult(True, staged.info.version, backup_dir)
+
+
+def _download_to(url: str, sha256: str, size: int, target: Path, timeout: float = 60.0) -> Path:
+    _validate_url(url)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        target.unlink()
+    digest = hashlib.sha256()
+    received = 0
+    request = Request(url, headers={"User-Agent": "QQLocalInbox-Updater/1"})
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            _validate_url(response.geturl())
+            with target.open("wb") as handle:
+                while True:
+                    chunk = response.read(64 * 1024)
+                    if not chunk:
+                        break
+                    received += len(chunk)
+                    if received > MAX_ARCHIVE_BYTES:
+                        raise UpdateError("更新包超过大小上限")
+                    handle.write(chunk)
+                    digest.update(chunk)
+    except UpdateError:
+        target.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        target.unlink(missing_ok=True)
+        raise UpdateError(f"下载更新失败：{exc}") from exc
+    if received != size:
+        target.unlink(missing_ok=True)
+        raise UpdateError("更新包大小与清单不一致")
+    if digest.hexdigest() != sha256:
+        target.unlink(missing_ok=True)
+        raise UpdateError("更新包 SHA256 校验失败")
+    return target
+
+
+def download_update(info: UpdateInfo, dest_dir: Path, timeout: float = 30.0) -> Path:
+    return _download_to(info.zip_url, info.sha256, info.size,
+                        Path(dest_dir) / (PurePosixPath(urlparse(info.zip_url).path).name
+                                          or f"QQLocalInbox-{info.version}.zip"),
+                        timeout=timeout)
+
+
+def stage_exe_update(info: UpdateInfo, staging_root: Path, timeout: float = 60.0) -> Path:
+    if not info.exe_url:
+        raise UpdateError("该版本没有提供可执行更新包")
+    staging_root = Path(staging_root)
+    version_dir = staging_root / "exe" / f"v{info.version}"
+    if version_dir.exists():
+        shutil.rmtree(version_dir)
+    target = _download_to(info.exe_url, info.exe_sha256, info.exe_size,
+                          version_dir / "QQLocalInbox.exe", timeout=timeout)
+    (version_dir / "manifest.json").write_text(
+        json.dumps({"version": info.version, "exe_sha256": info.exe_sha256,
+                    "exe_size": info.exe_size}, indent=2), encoding="utf-8")
+    return target
+
+
+def find_pending_exe(staging_root: Path, current_version: str) -> StagedUpdate | None:
+    exe_root = Path(staging_root) / "exe"
+    if not exe_root.is_dir():
+        return None
+    best: StagedUpdate | None = None
+    for version_dir in exe_root.iterdir():
+        if not version_dir.is_dir():
+            continue
+        exe = version_dir / "QQLocalInbox.exe"
+        manifest_path = version_dir / "manifest.json"
+        if not exe.is_file() or not manifest_path.is_file():
+            continue
+        try:
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            version = str(data.get("version", "")).strip()
+            if not is_newer(version, current_version):
+                continue
+            info = UpdateInfo(version=version, zip_url="", sha256="", size=0,
+                              exe_url=str(exe), exe_sha256=str(data.get("exe_sha256", "")),
+                              exe_size=int(data.get("exe_size", 0)))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+        if best is None or parse_version(info.version) > parse_version(best.info.version):
+            best = StagedUpdate(info=info, path=exe)
+    return best
+
+
+def apply_exe_pending(current_exe: Path, staging_root: Path, current_version: str) -> ApplyResult:
+    current_exe = Path(current_exe)
+    staged = find_pending_exe(staging_root, current_version)
+    if staged is None:
+        return ApplyResult(False, reason="no-pending")
+    backup = Path(staging_root) / "backups" / f"v{current_version}.exe"
+    try:
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(current_exe, backup)
+        old = current_exe.with_suffix(current_exe.suffix + ".old")
+        old.unlink(missing_ok=True)
+        current_exe.rename(old)
+        shutil.copy2(staged.path, current_exe)
+        old.unlink(missing_ok=True)
+    except Exception as exc:
+        try:
+            if backup.is_file():
+                old = current_exe.with_suffix(current_exe.suffix + ".old")
+                old.unlink(missing_ok=True)
+                if not current_exe.exists():
+                    shutil.copy2(backup, current_exe)
+        except Exception as restore_exc:
+            _log(Path(staging_root), f"exe restore failed: {restore_exc}")
+        _log(Path(staging_root), f"exe apply {staged.info.version} failed: {exc}")
+        raise UpdateError(f"应用可执行更新失败，已尝试回滚：{exc}") from exc
+    shutil.rmtree(staged.path.parent, ignore_errors=True)
+    _log(Path(staging_root), f"exe applied {staged.info.version} from {current_version}")
+    return ApplyResult(True, staged.info.version, backup)

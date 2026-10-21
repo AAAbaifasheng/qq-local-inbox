@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import threading
 from pathlib import Path
 
@@ -7,6 +8,8 @@ from .updater import (
     StagedUpdate,
     check_for_update,
     find_pending,
+    find_pending_exe,
+    stage_exe_update,
     stage_update,
 )
 
@@ -20,8 +23,8 @@ class UpdateService:
         self.events = events
         self.latest_info = None
         self.last_error = ""
-        self.pending_update: StagedUpdate | None = find_pending(
-            self.staging_root, self.current_version)
+        self.pending_update: StagedUpdate | None = None
+        self.refresh_pending()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
 
@@ -35,7 +38,10 @@ class UpdateService:
             return True
 
     def refresh_pending(self) -> StagedUpdate | None:
-        self.pending_update = find_pending(self.staging_root, self.current_version)
+        if getattr(sys, "frozen", False):
+            self.pending_update = find_pending_exe(self.staging_root, self.current_version)
+        else:
+            self.pending_update = find_pending(self.staging_root, self.current_version)
         return self.pending_update
 
     def _run(self, auto_download: bool) -> None:
@@ -55,7 +61,12 @@ class UpdateService:
         if not auto_download:
             return
         try:
-            stage_update(info, self.staging_root)
+            if getattr(sys, "frozen", False):
+                if not info.exe_url:
+                    raise ValueError("该版本未提供可执行更新包，请手动下载。")
+                stage_exe_update(info, self.staging_root)
+            else:
+                stage_update(info, self.staging_root)
         except Exception as exc:
             self.last_error = str(exc)[:160]
             self.events.put(("update_error", self.last_error))

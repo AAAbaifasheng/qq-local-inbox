@@ -15,6 +15,7 @@ from src.updater import (
     MAX_ARCHIVE_BYTES,
     UpdateError,
     UpdateInfo,
+    apply_exe_pending,
     apply_pending,
     download_update,
     is_newer,
@@ -243,6 +244,39 @@ class ApplyTests(unittest.TestCase):
             self._make_app(root)
             result = apply_pending(root, root / "updates", "0.3.0", force=True)
             self.assertFalse(result.applied)
+
+
+class ExeApplyTests(unittest.TestCase):
+    def _stage(self, staging: Path, version: str = "0.4.0"):
+        ver = staging / "exe" / f"v{version}"
+        ver.mkdir(parents=True)
+        (ver / "QQLocalInbox.exe").write_bytes(b"new", )
+        (ver / "manifest.json").write_text(
+            json.dumps({"version": version, "exe_sha256": "a" * 64, "exe_size": 3}),
+            encoding="utf-8")
+        return ver
+
+    def test_apply_exe_replaces_and_backs_up(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            exe = root / "QQLocalInbox.exe"
+            exe.write_bytes(b"old")
+            staging = root / "updates"
+            ver = self._stage(staging)
+            result = apply_exe_pending(exe, staging, "0.3.0")
+            self.assertTrue(result.applied)
+            self.assertEqual(exe.read_bytes(), b"new")
+            self.assertEqual((staging / "backups" / "v0.3.0.exe").read_bytes(), b"old")
+            self.assertFalse((ver / "QQLocalInbox.exe").exists())
+
+    def test_apply_exe_no_pending(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            exe = root / "QQLocalInbox.exe"
+            exe.write_bytes(b"old")
+            result = apply_exe_pending(exe, root / "updates", "0.3.0")
+            self.assertFalse(result.applied)
+            self.assertEqual(exe.read_bytes(), b"old")
 
 
 if __name__ == "__main__":

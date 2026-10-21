@@ -18,6 +18,8 @@ Do not open a public issue containing API keys, NapCat tokens, chat logs, real s
 Relevant areas include:
 
 - local-only validation for NapCat WebSocket / HTTP endpoints
+- loopback-only NapCat WebUI client, WebUI token storage, and QR login status handling
+- onefile exe update download, SHA256 verification, backup, and rename-replace
 - loopback-only Chaoxing bridge, token authentication, CORS origin checks, and request-size limits
 - Windows DPAPI credential storage
 - remote API consent and API key handling
@@ -48,7 +50,8 @@ If a credential was exposed, rotate it at the provider and remove it from the lo
 - Clearing local data uses SQLite `secure_delete` / WAL checkpoint / `VACUUM`, but cannot guarantee removal from SSD wear-levelling, snapshots, or backups.
 - The Chaoxing assignment reader is a best-effort userscript that parses page structure. 学习通 has no public student API; page changes can break extraction, and automated access may be subject to platform terms.
 - Auto-update trusts the GitHub repository/release account and the SHA256 in the release manifest. It does not provide code signing or protection if the upstream account or release pipeline is compromised. Auto-apply is skipped in git checkouts by default.
-- The PyInstaller build is not covered by source auto-update; packaged builds must be replaced manually in this version.
+- The NapCat WebUI token grants local management access to NapCat. It is stored with DPAPI, but any process running as the same Windows user may be able to invoke DPAPI decryption. Protect the Windows account.
+- The QR login window displays a live login QR from NapCat. Do not screenshot or share it while valid; the user must complete the scan and phone confirmation.
 
 ## Dependencies
 

@@ -10,6 +10,7 @@ SECRET_API_KEY = "api_key"
 SECRET_WS_TOKEN = "ws_token"
 SECRET_HTTP_TOKEN = "http_token"
 SECRET_CHAOXING_TOKEN = "chaoxing_token"
+SECRET_NAPCAT_WEBUI_TOKEN = "napcat_webui_token"
 _ENTROPY = b"QQLocalInbox.DPAPI.v1"
 
 class _DataBlob(ctypes.Structure):

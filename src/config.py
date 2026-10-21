@@ -57,6 +57,10 @@ def load_settings() -> dict:
         "auto_check_updates": True,
         "auto_download_updates": True,
         "auto_apply_updates": True,
+        "napcat_root": "",
+        "napcat_webui_url": "http://127.0.0.1:6099",
+        "auto_launch_napcat": True,
+        "auto_quick_login": True,
     }
     path = config_path()
     try:
@@ -71,9 +75,13 @@ def load_settings() -> dict:
     defaults["api_endpoint"] = _endpoint_or_default(defaults["api_endpoint"], LOCAL_API_DEFAULT)
     defaults["history_api_url"] = _local_or_default(defaults["history_api_url"], HISTORY_API_DEFAULT)
     for key in ("include_group_messages", "auto_connect", "auto_sync_today", "allow_remote_api",
-                "auto_check_updates", "auto_download_updates", "auto_apply_updates"):
+                "auto_check_updates", "auto_download_updates", "auto_apply_updates",
+                "auto_launch_napcat", "auto_quick_login"):
         defaults[key] = bool(defaults.get(key, False))
     defaults["chaoxing_port"] = _port_or_default(defaults.get("chaoxing_port", 8765))
+    defaults["napcat_root"] = str(defaults.get("napcat_root", "") or "")
+    defaults["napcat_webui_url"] = _local_or_default(
+        defaults.get("napcat_webui_url"), "http://127.0.0.1:6099")
     return defaults
 
 def save_settings(settings: dict) -> None:
@@ -92,5 +100,10 @@ def save_settings(settings: dict) -> None:
         "auto_check_updates": bool(settings.get("auto_check_updates", True)),
         "auto_download_updates": bool(settings.get("auto_download_updates", True)),
         "auto_apply_updates": bool(settings.get("auto_apply_updates", True)),
+        "napcat_root": str(settings.get("napcat_root", "") or ""),
+        "napcat_webui_url": _local_or_default(settings.get("napcat_webui_url"),
+                                              "http://127.0.0.1:6099"),
+        "auto_launch_napcat": bool(settings.get("auto_launch_napcat", True)),
+        "auto_quick_login": bool(settings.get("auto_quick_login", True)),
     }
     config_path().write_text(json.dumps(clean, ensure_ascii=False, indent=2), encoding="utf-8")

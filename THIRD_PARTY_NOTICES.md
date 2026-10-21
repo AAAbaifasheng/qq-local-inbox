@@ -26,13 +26,29 @@
 - 许可证：Apache License 2.0。
 - 本项目通过 `requirements.txt` 安装该依赖，不修改其源码。
 
+## qrcode
+
+- 项目：qrcode
+- 仓库：https://github.com/lincolnloop/python-qrcode
+- 作用：把 NapCat WebUI 返回的登录内容绘制成二维码（Canvas）。
+- 许可证：BSD License。
+- 本项目通过 `requirements.txt` 安装该依赖，不修改其源码。
+
+## PyInstaller（仅打包）
+
+- 项目：PyInstaller
+- 官网：https://pyinstaller.org/
+- 作用：把源码打包成 Windows onefile exe；不是运行时 Python 依赖。
+- 许可证：GPL 2.0-or-later，附带 bootloader exception；exe 中打包的 Python/Tcl/Tk 仍遵循各自许可证。
+- 发布 exe 前请自行确认打包环境的依赖许可证与分发义务。
+
 ## Python 与 Tkinter
 
 - 项目：Python / Tcl/Tk
 - 官网：https://www.python.org/
 - 作用：运行时与桌面界面。
 - 许可证：Python Software Foundation License；Tcl/Tk 使用其各自许可证。
-- 本项目不打包 Python 运行时；需要用户自行安装 Python 3.11/3.12。
+- 源码运行需要用户自行安装 Python 3.11/3.12；本项目提供的 onefile exe 会打包 Python 运行时与 Tcl/Tk，相关许可证随 exe 一并适用。
 
 ## DeepSeek API
 

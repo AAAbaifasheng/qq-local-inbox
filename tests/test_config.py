@@ -63,6 +63,18 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(settings["auto_download_updates"])
         self.assertFalse(settings["auto_apply_updates"])
 
+    def test_napcat_settings_defaults_and_persist(self):
+        settings = load_settings()
+        self.assertTrue(settings["auto_launch_napcat"])
+        self.assertTrue(settings["auto_quick_login"])
+        self.assertEqual(settings["napcat_webui_url"], "http://127.0.0.1:6099")
+        save_settings({"napcat_root": "C:/NapCat", "auto_launch_napcat": False,
+                       "auto_quick_login": False})
+        settings = load_settings()
+        self.assertEqual(settings["napcat_root"], "C:/NapCat")
+        self.assertFalse(settings["auto_launch_napcat"])
+        self.assertFalse(settings["auto_quick_login"])
+
     def test_version_file_matches_module(self):
         from pathlib import Path
         from src.version import __version__

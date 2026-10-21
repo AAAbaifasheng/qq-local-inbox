@@ -131,6 +131,31 @@ class SettingsDrawer(tk.Frame):
     def _build_connection(self, parent):
         body = tk.Frame(parent, bg=CARD)
         body.pack(fill="both", expand=True, padx=22, pady=(0, 20))
+        self._section(body, "NapCat 启动与登录",
+                      "Inbox 可隐藏启动 NapCat，并在应用内展示扫码登录界面。")
+        self._label(body, "NapCat 安装目录")
+        root_row = tk.Frame(body, bg=CARD)
+        root_row.pack(fill="x")
+        ttk.Entry(root_row, textvariable=self.app.napcat_root_var).pack(
+            side="left", fill="x", expand=True)
+        RoundedButton(root_row, text="检测", kind="ghost", height=30, padx=10,
+                      command=self.app.auto_detect_napcat_root).pack(side="right", padx=(6, 0))
+        self._label(body, "WebUI 地址")
+        webui_row = tk.Frame(body, bg=CARD)
+        webui_row.pack(fill="x")
+        ttk.Entry(webui_row, textvariable=self.app.napcat_webui_url_var).pack(
+            side="left", fill="x", expand=True)
+        RoundedButton(webui_row, text="读取 Token", kind="soft", height=30, padx=10,
+                      command=self.app.auto_read_webui_token).pack(side="right", padx=(6, 0))
+        self._label(body, "WebUI Token（留空则自动读取本机配置）")
+        ttk.Entry(body, textvariable=self.app.napcat_webui_token_var, show="•").pack(fill="x")
+        self._toggle(body, "启动时自动拉起 NapCat", self.app.auto_launch_napcat_var)
+        self._toggle(body, "有已保存账号时免扫码快速登录", self.app.auto_quick_login_var)
+        RoundedButton(body, text="启动并登录 NapCat", kind="primary", height=34,
+                      command=lambda: self.app.start_napcat_and_login(False)).pack(
+            anchor="w", pady=(8, 0))
+        self._hint(body, "扫码仍由你用手机 QQ 完成；程序只展示二维码与登录状态，不保存账号密码。")
+
         self._section(body, "NapCat 连接", "只允许本机地址；Token 使用 Windows DPAPI 加密保存。")
         self._label(body, "WebSocket 地址")
         self.ws_entry = self._entry(body, self.app.url_var)

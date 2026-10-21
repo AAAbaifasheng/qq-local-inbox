@@ -2,6 +2,27 @@
 
 本项目遵循语义化版本：`MAJOR.MINOR.PATCH`。补丁与次版本会自动更新，大版本需要手动确认。
 
+## [0.4.0] - 2026-10-21
+
+### Added
+
+- NapCat 一键启动：Inbox 启动时以无控制台窗口方式拉起 NapCat，不再需要手动开黑框。
+- 应用内扫码登录：从 NapCat WebUI 获取登录二维码并在登录窗口展示，手机扫码后自动连接；二维码过期可刷新。
+- 免扫码快速登录：NapCat 已保存账号时可直接快速登录，无需再次扫码。
+- WebUI Token 自动读取：可从本机 NapCat 配置读取 WebUI Token 并用 DPAPI 加密保存，也支持手动填写。
+- 单文件 exe 打包：`scripts/build_exe.py` 生成 `QQLocalInbox-<版本>-win64.exe`。
+- exe 版自动更新：下载新 exe 并校验 SHA256，下次启动时改名替换当前 exe，失败回滚。
+
+### Changed
+
+- 设置抽屉“连接”页新增 NapCat 安装目录、WebUI 地址、自动拉起与免扫码开关。
+- 启动流程改为：拉起 NapCat → 登录（快速登录或扫码）→ 自动连接并同步。
+
+### Security
+
+- NapCat WebUI 客户端只允许连接 `127.0.0.1`；登录只展示二维码与状态，不保存 QQ 账号密码。
+- exe 更新包强制 HTTPS、域名白名单、大小上限与 SHA256 校验；替换前备份旧 exe。
+
 ## [0.3.0] - 2026-10-20
 
 ### Added
